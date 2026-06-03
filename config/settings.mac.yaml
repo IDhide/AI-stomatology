@@ -1,0 +1,109 @@
+# ════════════════════════════════════════════════════════════════════
+#  Smile.AI — конфиг для теста на MacBook (без CUDA)
+#  Запуск:  python -m src.main_offline --config config/settings.mac.yaml --windowed
+# ════════════════════════════════════════════════════════════════════
+
+app:
+  name: "Smile.AI (Mac test)"
+  version: "0.2.0"
+  debug: true
+  clinic_name: "Клиника Smile"
+  address: ""
+
+# ────────── Камера: FaceTime HD на MacBook = device_index 0 ──────────
+camera:
+  device_index: 0
+  rtsp_url: ""
+  resolution:
+    width: 1280
+    height: 720
+  fps: 15
+  detection:
+    face_confidence: 0.6
+    motion_threshold: 25
+    cooldown_seconds: 2
+    presence_lost_after: 3.0
+
+# ────────── STT/TTS на CPU (на Mac без CUDA) ──────────
+voice:
+  stt:
+    # large-v3 на CPU мака будет ~2-3× медленнее realtime — для теста хватит "small".
+    # Если у вас M1/M2/M3 и хочется качества — поставьте "medium".
+    model: "small"
+    device: "cpu"
+    compute_type: "int8"
+    language: "ru"
+    beam_size: 5
+    use_vad: true
+    silence_ms: 800
+    max_record_sec: 20
+    min_record_sec: 0.4
+    no_speech_threshold: 0.6
+    doctor_names: []
+  tts:
+    engine: "silero"
+    language: "ru"
+    speaker: "xenia"
+    sample_rate: 48000
+    put_accent: true
+    put_yo: true
+
+# ────────── LLM на Ollama (Mac хост) ──────────
+llm:
+  provider: "ollama"
+  model: "smile-ru"
+  # На Mac без 12 GB GPU стоит начать с лёгкой 3B-модели, потом перейти на 7B
+  fallback_model: "qwen2.5:3b-instruct-q4_K_M"
+  base_url: "http://localhost:11434"
+  temperature: 0.4
+  max_tokens: 256
+  num_ctx: 4096
+
+dikidi:
+  base_url: "https://api.dikidi.net"
+  timeout: 15
+  retry_attempts: 3
+
+dental:
+  enable_humor: true
+  humor_probability: 0.45
+  min_turns_between_jokes: 3
+  alert_on_urgent: false
+  alert_channel: "none"
+
+# ────────── UI: окно 1280×720 для теста на ноуте ──────────
+ui:
+  window:
+    width: 1280
+    height: 720
+    fullscreen: false
+    background: [10, 18, 36]
+  circle:
+    radius: 140
+    color: [120, 210, 255]
+    pulse_speed: 2.0
+    pulse_range: [0.85, 1.25]
+    react_to_amplitude: true
+  idle_video:
+    path: "assets/videos/jellyfish.mp4"
+    loop: true
+    fade_ms: 600
+
+timeouts:
+  idle_return: 10
+  goodbye_delay: 3
+  max_conversation: 300
+  warmup_after_face: 0.5
+
+logging:
+  level: "INFO"
+  console: true
+  file:
+    enabled: true
+    path: "data/logs/app.log"
+    max_size: "10MB"
+    backup_count: 5
+  conversations:
+    enabled: true
+    jsonl_path: "data/logs/conversations.jsonl"
+    sqlite_path: "data/conversations.db"

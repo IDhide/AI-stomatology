@@ -1,0 +1,127 @@
+# ════════════════════════════════════════════════════════════════════
+#  Smile.AI — конфиг ассистента стоматологии
+# ════════════════════════════════════════════════════════════════════
+
+app:
+  name: "Smile.AI Dental Assistant"
+  version: "1.1.0"
+  debug: false
+  clinic_name: "Клиника Smile"
+  address: "г. Москва, ул. Тверская, д. 5"
+
+# ────────── Камера и детекция присутствия ──────────
+camera:
+  # либо индекс веб-камеры, либо RTSP-URL Xi Camera C200 (через .env: RTSP_URL)
+  device_index: 0
+  rtsp_url: ""              # пример: rtsp://user:pass@192.168.1.50:554/stream
+  resolution:
+    width: 1280
+    height: 720
+  fps: 15                   # 15 fps достаточно для face/motion и экономит GPU
+  detection:
+    face_confidence: 0.7
+    motion_threshold: 25
+    cooldown_seconds: 2     # антидребезг при появлении/уходе
+    presence_lost_after: 3.0  # секунд непрерывного отсутствия → "ушёл"
+
+# ────────── Голосовой pipeline ──────────
+voice:
+  stt:
+    model: "large-v3"            # faster-whisper: large-v3 / medium / small
+    device: "cuda"               # cuda | cpu
+    compute_type: "int8_float16" # для 3060 12GB оптимум
+    language: "ru"
+    beam_size: 5
+    use_vad: true
+    silence_ms: 700              # длительность тишины для конца фразы
+    max_record_sec: 25
+    min_record_sec: 0.4
+    no_speech_threshold: 0.6
+    # имена врачей помогают распознаванию — заполни своими
+    doctor_names:
+      - "Иванова Анна Сергеевна"
+      - "Петров Игорь Витальевич"
+      - "Смирнова Ольга Дмитриевна"
+
+  tts:
+    engine: "silero"
+    language: "ru"
+    speaker: "xenia"             # xenia / baya / kseniya (жен) / aidar / eugene (муж)
+    sample_rate: 48000
+    put_accent: true
+    put_yo: true
+
+# ────────── LLM (Ollama) ──────────
+llm:
+  provider: "ollama"
+  model: "smile-ru"              # имя кастомной модели из Modelfile
+  fallback_model: "qwen2.5:7b-instruct-q4_K_M"
+  base_url: "http://localhost:11434"
+  temperature: 0.4
+  max_tokens: 512
+  num_ctx: 4096
+  # промпты загружаются из config/prompts.yaml — не дублируй здесь
+
+# ────────── DIKIDI API ──────────
+dikidi:
+  base_url: "https://api.dikidi.net"
+  company_id: ""                 # подставь свой
+  token: ""                      # лежит в .env как DIKIDI_TOKEN
+  timeout: 15
+  retry_attempts: 3
+  cache_ttl_sec: 60              # кэш свободных окон
+
+# ────────── Стоматология ──────────
+dental:
+  enable_humor: true
+  humor_probability: 0.45        # вероятность сказать шутку при подходящем поводе
+  min_turns_between_jokes: 3
+  working_hours:
+    mon: ["09:00", "21:00"]
+    tue: ["09:00", "21:00"]
+    wed: ["09:00", "21:00"]
+    thu: ["09:00", "21:00"]
+    fri: ["09:00", "21:00"]
+    sat: ["10:00", "20:00"]
+    sun: ["10:00", "18:00"]
+  alert_on_urgent: true          # сигнал дежурному при острой боли
+  alert_channel: "telegram"      # telegram | email | none
+
+# ────────── UI ──────────
+ui:
+  window:
+    width: 1920
+    height: 1080
+    fullscreen: true
+    background: [10, 18, 35]     # тёмный фон, под медузы
+  circle:
+    radius: 180
+    color: [120, 210, 255]
+    pulse_speed: 2.0
+    pulse_range: [0.85, 1.25]
+    react_to_amplitude: true     # пульсация в такт TTS
+  idle_video:
+    path: "assets/videos/jellyfish.mp4"
+    loop: true
+    fade_ms: 600
+
+# ────────── Тайминги ──────────
+timeouts:
+  idle_return: 10                # секунд тишины → IDLE с медузами
+  goodbye_delay: 3
+  max_conversation: 300
+  warmup_after_face: 0.5         # секунд после face_detected до приветствия
+
+# ────────── Логирование ──────────
+logging:
+  level: "INFO"
+  console: true
+  file:
+    enabled: true
+    path: "data/logs/app.log"
+    max_size: "10MB"
+    backup_count: 5
+  conversations:
+    enabled: true
+    jsonl_path: "data/logs/conversations.jsonl"
+    sqlite_path: "data/conversations.db"

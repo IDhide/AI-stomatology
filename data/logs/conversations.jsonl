@@ -1,0 +1,10 @@
+{"conversation_id": "61798297-c2fb-4dd7-9884-c9c8bf6d3bdf", "event": "start", "timestamp": "2026-05-18T12:26:39.647877"}
+{"conversation_id": "61798297-c2fb-4dd7-9884-c9c8bf6d3bdf", "event": "message", "role": "assistant", "content": "Здравствуйте! Я виртуальный администратор салона. Чем могу помочь?", "timestamp": "2026-05-18T12:26:43.450502"}
+{"conversation_id": "61798297-c2fb-4dd7-9884-c9c8bf6d3bdf", "event": "message", "role": "user", "content": "Здравствуйте, хочу записаться на маникюр", "timestamp": "2026-05-18T12:26:45.954786"}
+{"conversation_id": "61798297-c2fb-4dd7-9884-c9c8bf6d3bdf", "event": "message", "role": "assistant", "content": "Конечно! У нас есть классический маникюр за 1500 рублей и аппаратный за 2000 рублей. Какой вас интересует?", "timestamp": "2026-05-18T12:26:46.956707"}
+{"conversation_id": "61798297-c2fb-4dd7-9884-c9c8bf6d3bdf", "event": "message", "role": "user", "content": "Какие у вас есть свободные окна на завтра?", "timestamp": "2026-05-18T12:26:54.459370"}
+{"conversation_id": "61798297-c2fb-4dd7-9884-c9c8bf6d3bdf", "event": "message", "role": "assistant", "content": "У нас есть свободные окна завтра в 10:00, 14:00 и 16:30. Какое время вам удобно?", "timestamp": "2026-05-18T12:26:55.461699"}
+{"conversation_id": "61798297-c2fb-4dd7-9884-c9c8bf6d3bdf", "event": "message", "role": "user", "content": "Сколько стоит стрижка?", "timestamp": "2026-05-18T12:27:01.964240"}
+{"conversation_id": "61798297-c2fb-4dd7-9884-c9c8bf6d3bdf", "event": "message", "role": "assistant", "content": "Понял вас. Чем еще могу помочь?", "timestamp": "2026-05-18T12:27:02.965939"}
+{"conversation_id": "61798297-c2fb-4dd7-9884-c9c8bf6d3bdf", "event": "message", "role": "assistant", "content": "До свидания! Будем рады видеть вас снова!", "timestamp": "2026-05-18T12:27:08.572900"}
+{"conversation_id": "61798297-c2fb-4dd7-9884-c9c8bf6d3bdf", "event": "end", "timestamp": "2026-05-18T12:27:08.573985"}

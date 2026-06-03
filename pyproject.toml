@@ -1,0 +1,90 @@
+# ════════════════════════════════════════════════════════════════════
+#  Smile.AI — голосовой ассистент стоматологии
+#  Зависимости управляются через uv (https://github.com/astral-sh/uv)
+#
+#  Установка:
+#     uv venv --python 3.11
+#     source .venv/bin/activate
+#     uv pip install -e ".[gpu]"          # с CUDA (Linux + RTX 3060)
+#     uv pip install -e ".[cpu]"          # без GPU (для разработки/маков)
+#
+#  Запуск:
+#     uv run python -m src.main_offline   # оффлайн-демо без DIKIDI
+#     uv run python -m src.main           # production
+#     uv run python scripts/test_ui.py    # проверка UI на телевизоре
+# ════════════════════════════════════════════════════════════════════
+[project]
+name = "smile-ai"
+version = "0.2.0"
+description = "Голосовой ассистент-администратор стоматологической клиники"
+readme = "README.md"
+requires-python = ">=3.10,<3.13"
+license = { text = "Proprietary" }
+authors = [{ name = "Smile Clinic" }]
+
+dependencies = [
+    # ── ядро / infra ──────────────────────────────
+    "loguru>=0.7.2",
+    "pyyaml>=6.0.1",
+    "pydantic>=2.5",
+    "python-dotenv>=1.0",
+    "requests>=2.31",
+    "aiohttp>=3.9",
+    "num2words>=0.5.13",
+
+    # ── видео и камера ────────────────────────────
+    "opencv-python>=4.9",
+    "mediapipe>=0.10.14",
+
+    # ── UI ────────────────────────────────────────
+    "pygame>=2.5.2",
+    "numpy>=1.26,<2.1",
+
+    # ── аудио ─────────────────────────────────────
+    "sounddevice>=0.4.6",
+    "soundfile>=0.12.1",
+
+    # ── STT / TTS ─────────────────────────────────
+    # faster-whisper тянет ctranslate2; для CPU/CUDA — одна и та же сборка
+    "faster-whisper>=1.0.3",
+    # omegaconf нужен Silero TTS (torch.hub) — сам он его не тянет
+    "omegaconf>=2.3.0",
+    # torch ставится отдельной extras-группой ниже, чтобы выбрать cu121 или cpu
+]
+
+[project.optional-dependencies]
+gpu = [
+    # CUDA 12.1 (RTX 3060), индекс задаётся через uv pip install --extra-index-url
+    # см. README раздел Установка.
+    "torch==2.3.1",
+    "torchaudio==2.3.1",
+]
+cpu = [
+    "torch==2.3.1",
+    "torchaudio==2.3.1",
+]
+dev = [
+    "ruff>=0.4",
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+]
+
+[project.scripts]
+smile-offline = "src.main_offline:main"
+smile-prod = "src.main:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src"]
+
+# ── ruff (легкий линтер, не обязателен) ──
+[tool.ruff]
+line-length = 110
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP"]
+ignore = ["E501"]
