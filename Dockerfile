@@ -1,105 +1,114 @@
 # ════════════════════════════════════════════════════════════════════
 #  Smile.AI — Dockerfile (multi-stage)
 #
-#  Build (CPU):
-#    docker build --target runtime -t smile-ai:latest .
+#  Targets:
+#    deps    — лёгкие зависимости без torch (для CI-проверки структуры)
+#    builder — полная сборка с torch (для production)
+#    runtime — финальный образ
 #
-#  Build (GPU / CUDA 12.1):
-#    docker build --build-arg VARIANT=gpu --target runtime -t smile-ai:gpu .
-#
-#  Run:
-#    docker compose up
+#  CI:       docker build --target deps -t smile-ai:deps .
+#  CPU prod: docker build --target runtime -t smile-ai:latest .
+#  GPU prod: docker build --build-arg VARIANT=gpu --target runtime -t smile-ai:gpu .
 # ════════════════════════════════════════════════════════════════════
 
 ARG PYTHON_VERSION=3.11
 ARG VARIANT=cpu
 
-# ── Stage 1: builder ─────────────────────────────────────────────
-FROM python:${PYTHON_VERSION}-slim AS builder
+# ── Stage 1: base ────────────────────────────────────────────────
+FROM python:${PYTHON_VERSION}-slim AS base
 
-ARG VARIANT
-ARG PYTHON_VERSION
-
-# Системные зависимости для сборки
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    curl \
-    build-essential \
-    libportaudio2 \
-    libsndfile1 \
-    ffmpeg \
-    libgl1 \
-    libglib2.0-0 \
-    && rm -rf /var/lib/apt/lists/*
-
-# Устанавливаем uv
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
-COPY --from=ghcr.io/astral-sh/uv:latest /uvx /usr/local/bin/uvx
+
+# Используем Python из образа, не скачиваем новый
+ENV UV_PYTHON_DOWNLOADS=never
 
 WORKDIR /app
 
-# ── Сначала создаём venv ──
-RUN uv venv --python ${PYTHON_VERSION} .venv
+# ── Stage 2: deps (CI target) ─────────────────────────────────────
+# Только pure-python пакеты, без torch/ML/build-tools
+FROM base AS deps
 
-# ── Копируем ВЕСЬ исходник (нужен для hatchling editable install) ──
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libsndfile1 \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN uv venv --python python3 .venv
+
+# Устанавливаем только необходимые зависимости (все pure-python wheels)
+RUN uv pip install --python .venv/bin/python \
+    "loguru>=0.7.2" \
+    "pyyaml>=6.0.1" \
+    "pydantic>=2.5" \
+    "python-dotenv>=1.0" \
+    "requests>=2.31" \
+    "aiohttp>=3.9" \
+    "num2words>=0.5.13"
+
+# Копируем код — PYTHONPATH=/app позволяет импортировать src без pip install
+COPY src/ src/
+COPY config/ config/
+
+# Smoke-тест: проверяем что импорты работают
+RUN PYTHONPATH=/app .venv/bin/python -c \
+    "from src.core.config import load_config; load_config(); print('deps stage OK')"
+
+# ── Stage 3: builder — полная сборка ─────────────────────────────
+FROM base AS builder
+
+ARG VARIANT
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    libportaudio2 libsndfile1 ffmpeg \
+    libgl1 libglib2.0-0 \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN uv venv --python python3 .venv
+
 COPY pyproject.toml .
 COPY src/ src/
 
-# ── Устанавливаем зависимости ──
+# CPU: torch с обычного PyPI (работает без CUDA)
+# GPU: torch с CUDA 12.1 индекса (для RTX 3060 и аналогов)
 RUN if [ "$VARIANT" = "gpu" ]; then \
-        uv pip install \
-            --python .venv/bin/python \
-            --extra-index-url https://download.pytorch.org/whl/cu121 \
-            -e ".[gpu]"; \
+      uv pip install \
+        --python .venv/bin/python \
+        --extra-index-url https://download.pytorch.org/whl/cu121 \
+        -e ".[gpu]"; \
     else \
-        uv pip install \
-            --python .venv/bin/python \
-            --extra-index-url https://download.pytorch.org/whl/cpu \
-            -e ".[cpu]"; \
+      uv pip install \
+        --python .venv/bin/python \
+        -e ".[cpu]"; \
     fi
 
-# ── Stage 2: runtime ─────────────────────────────────────────────
+# ── Stage 4: runtime ─────────────────────────────────────────────
 FROM python:${PYTHON_VERSION}-slim AS runtime
 
 LABEL org.opencontainers.image.title="Smile.AI Dental Assistant"
 LABEL org.opencontainers.image.description="Голосовой ассистент стоматологической клиники"
 
-# Runtime-зависимости (без build-tools)
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    libportaudio2 \
-    libsndfile1 \
-    ffmpeg \
-    libgl1 \
-    libglib2.0-0 \
-    libsdl2-2.0-0 \
-    libsdl2-mixer-2.0-0 \
-    libsdl2-image-2.0-0 \
-    libsdl2-ttf-2.0-0 \
+    libportaudio2 libsndfile1 ffmpeg \
+    libgl1 libglib2.0-0 \
+    libsdl2-2.0-0 libsdl2-mixer-2.0-0 \
+    libsdl2-image-2.0-0 libsdl2-ttf-2.0-0 \
     && rm -rf /var/lib/apt/lists/*
 
-WORKDIR /app
-
-# uv в runtime тоже нужен (для возможного запуска скриптов)
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
-
-# Копируем venv из builder
 COPY --from=builder /app/.venv .venv
-
-# Копируем исходники и конфиги
 COPY src/ src/
 COPY config/ config/
 COPY scripts/Modelfile scripts/Modelfile
 
-# Создаём директории для данных (монтируются как volumes)
 RUN mkdir -p data/logs assets/videos
 
 ENV PATH="/app/.venv/bin:$PATH"
 ENV PYTHONPATH="/app"
 ENV PYTHONUNBUFFERED=1
 ENV PYTHONDONTWRITEBYTECODE=1
-
-# Для pygame без дисплея (headless / X11-forwarding)
 ENV SDL_VIDEODRIVER=dummy
 ENV SDL_AUDIODRIVER=dummy
 
-# Точка входа — оффлайн-демо по умолчанию
+WORKDIR /app
+
 CMD ["python", "-m", "src.main_offline", "--no-camera", "--simulate-voice"]
