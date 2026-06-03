@@ -14,10 +14,10 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from enum import Enum
+from enum import StrEnum
 
 
-class Urgency(str, Enum):
+class Urgency(StrEnum):
     URGENT    = "urgent"      # острая боль, флюс, травма → сегодня
     PLANNED   = "planned"     # обычная запись
     COSMETIC  = "cosmetic"    # эстетика, без боли

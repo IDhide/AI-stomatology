@@ -21,7 +21,7 @@ import random
 from dataclasses import dataclass
 
 from .intents import Intent
-from .triage import Urgency, TriageResult
+from .triage import TriageResult, Urgency
 
 
 @dataclass(frozen=True)
@@ -133,8 +133,8 @@ def maybe_joke(
 
 
 if __name__ == "__main__":
-    from .triage import triage
     from .intents import classify_intent
+    from .triage import triage
 
     rng = random.Random(42)
     cases = [

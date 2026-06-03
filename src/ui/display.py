@@ -27,13 +27,11 @@ import asyncio
 import math
 import time
 from pathlib import Path
-from typing import Optional
 
 import cv2
 import numpy as np
 import pygame
 from loguru import logger
-
 
 # ────────────────────────────────────────────────────────────
 # Цветовые пресеты режимов (R, G, B)
@@ -95,13 +93,13 @@ class UIDisplay:
         # ── Видео медуз ──
         video_path_raw = self._video_cfg.get("path", "assets/videos/jellyfish.mp4")
         video_path = Path(video_path_raw)
-        self.video_cap: Optional[cv2.VideoCapture] = None
+        self.video_cap: cv2.VideoCapture | None = None
         if video_path.exists():
             self.video_cap = cv2.VideoCapture(str(video_path))
             fps_hint = self.video_cap.get(cv2.CAP_PROP_FPS) or 30.0
             self.video_frame_dt = 1.0 / max(fps_hint, 10.0)
             self._last_video_t = 0.0
-            self._last_video_surf: Optional[pygame.Surface] = None
+            self._last_video_surf: pygame.Surface | None = None
             logger.success(f"Видео загружено: {video_path}")
         else:
             logger.warning(f"Видео медуз не найдено: {video_path} — фон чёрный")

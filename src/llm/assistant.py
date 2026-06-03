@@ -81,7 +81,7 @@ class LLMAssistant:
     # ------------------------------------------------------------------
     def _load_prompts(self, path: pathlib.Path) -> dict:
         try:
-            with open(path, "r", encoding="utf-8") as f:
+            with open(path, encoding="utf-8") as f:
                 return yaml.safe_load(f) or {}
         except FileNotFoundError:
             logger.warning(f"prompts.yaml не найден: {path}. Использую дефолты.")
@@ -139,7 +139,7 @@ class LLMAssistant:
         # 4. Полноценный вызов LLM с tool-calling
         try:
             text = await self._llm_turn(user_text, tri)
-        except Exception as e:
+        except Exception:
             logger.exception("LLM error")
             text = self.prompts.get(
                 "fallback_long",

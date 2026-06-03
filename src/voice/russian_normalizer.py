@@ -25,7 +25,7 @@ from __future__ import annotations
 
 import re
 import unicodedata
-from typing import Callable
+from collections.abc import Callable
 
 try:
     from num2words import num2words as _num2words  # type: ignore

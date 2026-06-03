@@ -1,0 +1,79 @@
+# ════════════════════════════════════════════════════════════════════
+#  Smile.AI — CI (GitHub Actions)
+# ════════════════════════════════════════════════════════════════════
+name: CI
+
+on:
+  push:
+    branches: [main, "setup/**", "feature/**", "fix/**"]
+  pull_request:
+    branches: [main]
+
+jobs:
+  lint-and-test:
+    name: Lint & Test (Python ${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.11"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      # setup-uv v6 с python-version уже устанавливает Python и
+      # выставляет UV_PYTHON. uv venv использует его автоматически.
+
+      - name: Install system deps
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y --no-install-recommends \
+            libportaudio2 libsndfile1 ffmpeg \
+            libgl1 libglib2.0-0
+
+      - name: Create venv & install deps
+        run: |
+          uv venv .venv
+          # Устанавливаем без тяжёлого torch — CI тесты не требуют GPU
+          # Torch ставим cpu-вариант отдельно чтобы не скачивать cu121
+          uv pip install --python .venv/bin/python \
+            -e ".[dev]" \
+            --extra-index-url https://download.pytorch.org/whl/cpu
+
+      - name: Lint (ruff)
+        run: |
+          .venv/bin/ruff check src/ --output-format=github
+
+      - name: Run tests
+        run: |
+          .venv/bin/pytest tests/ -v --tb=short
+        env:
+          SDL_VIDEODRIVER: dummy
+          SDL_AUDIODRIVER: dummy
+          PYTHONPATH: ${{ github.workspace }}
+
+  docker-build:
+    name: Docker build check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build Docker image (CPU)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          target: runtime
+          build-args: |
+            VARIANT=cpu
+          push: false
+          tags: smile-ai:ci-test
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

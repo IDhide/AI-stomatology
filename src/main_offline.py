@@ -280,7 +280,7 @@ class OfflineApp:
     async def _think(self, user_text: str) -> str:
         try:
             return await self.llm.get_response(user_text)
-        except Exception as e:
+        except Exception:
             logger.exception("LLM error")
             return "Простите, мне нужна минутка. Повторите, пожалуйста, ваш вопрос."
 
