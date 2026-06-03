@@ -9,6 +9,10 @@ on:
   pull_request:
     branches: [main]
 
+env:
+  # Форсируем Node 24 для всех actions (убирает warning о deprecated Node 20)
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
 jobs:
   lint-and-test:
     name: Lint & Test (Python ${{ matrix.python-version }})
@@ -25,32 +29,32 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
 
-      # setup-uv v6 с python-version уже устанавливает Python и
-      # выставляет UV_PYTHON. uv venv использует его автоматически.
-
       - name: Install system deps
         run: |
           sudo apt-get update -q
           sudo apt-get install -y --no-install-recommends \
-            libportaudio2 libsndfile1 ffmpeg \
-            libgl1 libglib2.0-0
+            libsndfile1 ffmpeg libgl1 libglib2.0-0
 
-      - name: Create venv & install deps
+      - name: Create venv
+        run: uv venv .venv
+
+      - name: Install CI deps (без torch/opencv/mediapipe/pygame)
         run: |
-          uv venv .venv
-          # Устанавливаем без тяжёлого torch — CI тесты не требуют GPU
-          # Torch ставим cpu-вариант отдельно чтобы не скачивать cu121
+          # Сначала ставим лёгкие зависимости напрямую
           uv pip install --python .venv/bin/python \
-            -e ".[dev]" \
-            --extra-index-url https://download.pytorch.org/whl/cpu
+            "loguru>=0.7.2" "pyyaml>=6.0.1" "pydantic>=2.5" \
+            "python-dotenv>=1.0" "requests>=2.31" "aiohttp>=3.9" \
+            "num2words>=0.5.13" "numpy>=1.26,<2.1" \
+            "soundfile>=0.12.1" "omegaconf>=2.3.0" \
+            "ruff>=0.4" "pytest>=8.0" "pytest-asyncio>=0.23"
+          # Ставим сам пакет без его тяжёлых зависимостей
+          uv pip install --python .venv/bin/python -e "." --no-deps
 
       - name: Lint (ruff)
-        run: |
-          .venv/bin/ruff check src/ --output-format=github
+        run: .venv/bin/ruff check src/ --output-format=github
 
       - name: Run tests
-        run: |
-          .venv/bin/pytest tests/ -v --tb=short
+        run: .venv/bin/pytest tests/ -v --tb=short
         env:
           SDL_VIDEODRIVER: dummy
           SDL_AUDIODRIVER: dummy
@@ -71,8 +75,7 @@ jobs:
           context: .
           file: ./Dockerfile
           target: runtime
-          build-args: |
-            VARIANT=cpu
+          build-args: VARIANT=cpu
           push: false
           tags: smile-ai:ci-test
           cache-from: type=gha

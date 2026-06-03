@@ -69,6 +69,12 @@ cpu = [
     "torch==2.3.1",
     "torchaudio==2.3.1",
 ]
+ci = [
+    # Лёгкий набор для GitHub Actions: без torch/opencv/mediapipe/pygame
+    "ruff>=0.4",
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+]
 dev = [
     "ruff>=0.4",
     "pytest>=8.0",
