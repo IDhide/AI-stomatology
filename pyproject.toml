@@ -9,9 +9,14 @@
 #     uv pip install -e ".[cpu]"          # без GPU (для разработки/маков)
 #
 #  Запуск:
-#     uv run python -m src.main_offline   # оффлайн-демо без DIKIDI
-#     uv run python -m src.main           # production
-#     uv run python scripts/test_ui.py    # проверка UI на телевизоре
+#     python -m src.main_offline          # оффлайн-демо без DIKIDI
+#     python -m src.main_offline --no-camera --simulate-voice
+#     python -m src.main                  # production
+#     python scripts/test_ui.py           # проверка UI
+#
+#  Или через скрипт:
+#     bash scripts/run.sh offline
+#     bash scripts/run.sh docker
 # ════════════════════════════════════════════════════════════════════
 [project]
 name = "smile-ai"
@@ -39,6 +44,7 @@ dependencies = [
     # ── UI ────────────────────────────────────────
     "pygame>=2.5.2",
     "numpy>=1.26,<2.1",
+    "pillow>=10.0",
 
     # ── аудио ─────────────────────────────────────
     "sounddevice>=0.4.6",
@@ -54,8 +60,8 @@ dependencies = [
 
 [project.optional-dependencies]
 gpu = [
-    # CUDA 12.1 (RTX 3060), индекс задаётся через uv pip install --extra-index-url
-    # см. README раздел Установка.
+    # CUDA 12.1 (RTX 3060)
+    # uv pip install --extra-index-url https://download.pytorch.org/whl/cu121 -e ".[gpu]"
     "torch==2.3.1",
     "torchaudio==2.3.1",
 ]
@@ -71,7 +77,7 @@ dev = [
 
 [project.scripts]
 smile-offline = "src.main_offline:main"
-smile-prod = "src.main:main"
+smile-prod    = "src.main:main"
 
 [build-system]
 requires = ["hatchling"]
@@ -80,7 +86,7 @@ build-backend = "hatchling.build"
 [tool.hatch.build.targets.wheel]
 packages = ["src"]
 
-# ── ruff (легкий линтер, не обязателен) ──
+# ── ruff ───────────────────────────────────────
 [tool.ruff]
 line-length = 110
 target-version = "py311"
@@ -88,3 +94,8 @@ target-version = "py311"
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "UP"]
 ignore = ["E501"]
+
+# ── pytest ─────────────────────────────────────
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]

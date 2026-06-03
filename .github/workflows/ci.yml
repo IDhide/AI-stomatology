@@ -1,0 +1,74 @@
+# ════════════════════════════════════════════════════════════════════
+#  Smile.AI — CI (GitHub Actions)
+#  Запускается при push/PR в main и setup/docker-uv-deployment
+# ════════════════════════════════════════════════════════════════════
+name: CI
+
+on:
+  push:
+    branches: [main, "setup/**", "feature/**", "fix/**"]
+  pull_request:
+    branches: [main]
+
+jobs:
+  lint-and-test:
+    name: Lint & Test (Python ${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.11"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          version: "latest"
+
+      - name: Set up Python
+        run: uv python install ${{ matrix.python-version }}
+
+      - name: Install system deps
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y --no-install-recommends \
+            libportaudio2 libsndfile1 ffmpeg \
+            libgl1 libglib2.0-0 \
+            libsdl2-dev
+
+      - name: Create venv & install deps (CPU, no torch for speed)
+        run: |
+          uv venv --python ${{ matrix.python-version }}
+          source .venv/bin/activate
+          # Ставим без torch для ускорения CI — тесты не требуют GPU
+          uv pip install -e ".[dev]" \
+            --extra-index-url https://download.pytorch.org/whl/cpu
+
+      - name: Lint (ruff)
+        run: |
+          source .venv/bin/activate
+          ruff check src/ --output-format=github
+
+      - name: Run tests
+        run: |
+          source .venv/bin/activate
+          pytest tests/ -v --tb=short
+        env:
+          SDL_VIDEODRIVER: dummy
+          SDL_AUDIODRIVER: dummy
+
+  docker-build:
+    name: Docker build check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build Docker image (CPU)
+        run: |
+          docker build \
+            --target runtime \
+            --build-arg VARIANT=cpu \
+            -t smile-ai:ci-test \
+            --no-cache \
+            .

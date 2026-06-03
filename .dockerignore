@@ -1,0 +1,42 @@
+# Git
+.git
+.gitignore
+
+# Python
+__pycache__
+*.py[cod]
+.pytest_cache
+.coverage
+htmlcov
+
+# Виртуальные окружения
+.venv
+venv
+env
+
+# Секреты
+.env
+.env.local
+
+# Логи и данные (монтируются как volumes)
+data/logs
+data/*.db
+
+# Большие модели
+models/
+*.bin
+*.pt
+*.ckpt
+*.safetensors
+
+# Видео (монтируется как volume)
+assets/videos
+
+# Документация (не нужна в образе)
+docs/
+*.md
+!README.md
+
+# IDE
+.idea
+.vscode
