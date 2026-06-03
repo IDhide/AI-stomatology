@@ -10,7 +10,6 @@ on:
     branches: [main]
 
 env:
-  # Форсируем Node 24 для всех actions (убирает warning о deprecated Node 20)
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 jobs:
@@ -38,16 +37,14 @@ jobs:
       - name: Create venv
         run: uv venv .venv
 
-      - name: Install CI deps (без torch/opencv/mediapipe/pygame)
+      - name: Install deps (без torch/opencv/mediapipe/pygame)
         run: |
-          # Сначала ставим лёгкие зависимости напрямую
           uv pip install --python .venv/bin/python \
             "loguru>=0.7.2" "pyyaml>=6.0.1" "pydantic>=2.5" \
             "python-dotenv>=1.0" "requests>=2.31" "aiohttp>=3.9" \
             "num2words>=0.5.13" "numpy>=1.26,<2.1" \
             "soundfile>=0.12.1" "omegaconf>=2.3.0" \
             "ruff>=0.4" "pytest>=8.0" "pytest-asyncio>=0.23"
-          # Ставим сам пакет без его тяжёлых зависимостей
           uv pip install --python .venv/bin/python -e "." --no-deps
 
       - name: Lint (ruff)
@@ -69,14 +66,15 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Build Docker image (CPU)
+      # Используем target=deps: устанавливает только лёгкие зависимости
+      # без torch (~2GB) — проверяет структуру, импорты, конфиги
+      - name: Build Docker image (deps target, без torch)
         uses: docker/build-push-action@v6
         with:
           context: .
           file: ./Dockerfile
-          target: runtime
-          build-args: VARIANT=cpu
+          target: deps
           push: false
-          tags: smile-ai:ci-test
+          tags: smile-ai:ci-deps
           cache-from: type=gha
           cache-to: type=gha,mode=max
