@@ -2,18 +2,13 @@
 #  Smile.AI — Dockerfile (multi-stage)
 #
 #  Targets:
-#    deps    — минимальные зависимости без torch (для CI-проверки)
+#    deps    — лёгкие зависимости без torch (для CI-проверки структуры)
 #    builder — полная сборка с torch (для production)
 #    runtime — финальный образ
 #
-#  CI:
-#    docker build --target deps -t smile-ai:deps .
-#
-#  Production (CPU):
-#    docker build --target runtime -t smile-ai:latest .
-#
-#  Production (GPU):
-#    docker build --build-arg VARIANT=gpu --target runtime -t smile-ai:gpu .
+#  CI:       docker build --target deps -t smile-ai:deps .
+#  CPU prod: docker build --target runtime -t smile-ai:latest .
+#  GPU prod: docker build --build-arg VARIANT=gpu --target runtime -t smile-ai:gpu .
 # ════════════════════════════════════════════════════════════════════
 
 ARG PYTHON_VERSION=3.11
@@ -22,26 +17,24 @@ ARG VARIANT=cpu
 # ── Stage 1: base ────────────────────────────────────────────────
 FROM python:${PYTHON_VERSION}-slim AS base
 
-# uv из официального образа
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 
-# Не скачиваем Python — используем системный из образа
+# Используем Python из образа, не скачиваем новый
 ENV UV_PYTHON_DOWNLOADS=never
 
 WORKDIR /app
 
-# ── Stage 2: deps (CI target) — только лёгкие зависимости ────────
+# ── Stage 2: deps (CI target) ─────────────────────────────────────
+# Только pure-python пакеты, без torch/ML/build-tools
 FROM base AS deps
 
-# Минимальные системные пакеты для deps
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libsndfile1 \
     && rm -rf /var/lib/apt/lists/*
 
-# Создаём venv используя системный Python
 RUN uv venv --python python3 .venv
 
-# Только зависимости нужные для запуска кода (без ML-стека)
+# Устанавливаем только необходимые зависимости (все pure-python wheels)
 RUN uv pip install --python .venv/bin/python \
     "loguru>=0.7.2" \
     "pyyaml>=6.0.1" \
@@ -51,10 +44,12 @@ RUN uv pip install --python .venv/bin/python \
     "aiohttp>=3.9" \
     "num2words>=0.5.13"
 
-# Копируем код и ставим пакет без тяжёлых зависимостей
-COPY pyproject.toml .
+# Копируем код — PYTHONPATH=/app позволяет импортировать src без pip install
 COPY src/ src/
-RUN uv pip install --python .venv/bin/python -e "." --no-deps
+COPY config/ config/
+
+# Проверяем что импорты работают
+RUN .venv/bin/python -c "from src.core.config import load_config; load_config(); print('deps stage OK')"
 
 # ── Stage 3: builder — полная сборка ─────────────────────────────
 FROM base AS builder
@@ -72,8 +67,8 @@ RUN uv venv --python python3 .venv
 COPY pyproject.toml .
 COPY src/ src/
 
-# torch с PyPI (cpu-вариант подходит для работы без CUDA)
-# Для GPU используй VARIANT=gpu — ставится с индекса PyTorch CUDA 12.1
+# CPU: torch с обычного PyPI (работает без CUDA)
+# GPU: torch с CUDA 12.1 индекса (для RTX 3060 и аналогов)
 RUN if [ "$VARIANT" = "gpu" ]; then \
       uv pip install \
         --python .venv/bin/python \
