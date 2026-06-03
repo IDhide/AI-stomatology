@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
-from typing import Optional
 
 import yaml
 from dotenv import load_dotenv
@@ -108,12 +107,12 @@ class Config(_Loose):
     dental: DentalConfig = Field(default_factory=DentalConfig)
 
 
-def load_config(config_path: Optional[str] = None) -> Config:
+def load_config(config_path: str | None = None) -> Config:
     """Загрузка конфигурации из YAML и переменных окружения."""
     load_dotenv()
     if config_path is None:
         config_path = Path(__file__).parent.parent.parent / "config" / "settings.yaml"
-    with open(config_path, "r", encoding="utf-8") as f:
+    with open(config_path, encoding="utf-8") as f:
         data = yaml.safe_load(f) or {}
 
     # .env переопределяет

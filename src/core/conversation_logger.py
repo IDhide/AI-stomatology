@@ -2,29 +2,28 @@
 Логирование разговоров в файл
 """
 import json
+import uuid
 from datetime import datetime
 from pathlib import Path
-from typing import Optional
-import uuid
 
 from loguru import logger
 
 
 class ConversationLogger:
     """Логирование разговоров с клиентами"""
-    
+
     def __init__(self, config):
         self.enabled = config["enabled"]
         self.log_path = Path(config["path"])
-        
+
         if self.enabled:
             self.log_path.parent.mkdir(parents=True, exist_ok=True)
             logger.info(f"Логирование разговоров: {self.log_path}")
-    
+
     def start_conversation(self) -> str:
         """Начало новой беседы"""
         conversation_id = str(uuid.uuid4())
-        
+
         if self.enabled:
             entry = {
                 "conversation_id": conversation_id,
@@ -32,9 +31,9 @@ class ConversationLogger:
                 "timestamp": datetime.now().isoformat()
             }
             self._write_log(entry)
-        
+
         return conversation_id
-    
+
     def log_message(self, conversation_id: str, role: str, content: str):
         """Логирование сообщения"""
         if self.enabled:
@@ -46,7 +45,7 @@ class ConversationLogger:
                 "timestamp": datetime.now().isoformat()
             }
             self._write_log(entry)
-    
+
     def end_conversation(self, conversation_id: str):
         """Завершение беседы"""
         if self.enabled:
@@ -56,7 +55,7 @@ class ConversationLogger:
                 "timestamp": datetime.now().isoformat()
             }
             self._write_log(entry)
-    
+
     def _write_log(self, entry: dict):
         """Запись в JSONL файл"""
         try:

@@ -1,9 +1,9 @@
 """Стоматологический «мозг» ассистента: знания, триаж, интенты, юмор."""
-from .knowledge_base import KB, find_procedure, list_procedures
-from .triage import triage, Urgency
-from .intents import classify_intent, Intent
-from .humor import maybe_joke, JOKE_CATALOG
 from .faq import FAQ, lookup_faq
+from .humor import JOKE_CATALOG, maybe_joke
+from .intents import Intent, classify_intent
+from .knowledge_base import KB, find_procedure, list_procedures
+from .triage import Urgency, triage
 
 __all__ = [
     "KB", "find_procedure", "list_procedures",

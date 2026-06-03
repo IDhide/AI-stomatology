@@ -1,15 +1,13 @@
 # ════════════════════════════════════════════════════════════════════
-#  Smile.AI — Dockerfile
+#  Smile.AI — Dockerfile (multi-stage)
 #
-#  Многоэтапная сборка:
-#    builder  — устанавливает зависимости через uv
-#    runtime  — минимальный образ без build-инструментов
-#
-#  Build:
+#  Build (CPU):
 #    docker build --target runtime -t smile-ai:latest .
+#
+#  Build (GPU / CUDA 12.1):
 #    docker build --build-arg VARIANT=gpu --target runtime -t smile-ai:gpu .
 #
-#  Run (офлайн-демо без камеры):
+#  Run:
 #    docker compose up
 # ════════════════════════════════════════════════════════════════════
 
@@ -20,6 +18,7 @@ ARG VARIANT=cpu
 FROM python:${PYTHON_VERSION}-slim AS builder
 
 ARG VARIANT
+ARG PYTHON_VERSION
 
 # Системные зависимости для сборки
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -33,25 +32,29 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # Устанавливаем uv
-RUN curl -LsSf https://astral.sh/uv/install.sh | sh
-ENV PATH="/root/.local/bin:/root/.cargo/bin:$PATH"
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
+COPY --from=ghcr.io/astral-sh/uv:latest /uvx /usr/local/bin/uvx
 
 WORKDIR /app
 
-# Копируем только файлы описания зависимостей (кэш слоёв)
-COPY pyproject.toml .
-COPY requirements.txt .
-COPY requirements-minimal.txt .
-
-# Создаём venv и ставим зависимости
+# ── Сначала создаём venv ──
 RUN uv venv --python ${PYTHON_VERSION} .venv
 
+# ── Копируем ВЕСЬ исходник (нужен для hatchling editable install) ──
+COPY pyproject.toml .
+COPY src/ src/
+
+# ── Устанавливаем зависимости ──
 RUN if [ "$VARIANT" = "gpu" ]; then \
         uv pip install \
+            --python .venv/bin/python \
             --extra-index-url https://download.pytorch.org/whl/cu121 \
-            -e ".[gpu]" --no-cache; \
+            -e ".[gpu]"; \
     else \
-        uv pip install -e ".[cpu]" --no-cache; \
+        uv pip install \
+            --python .venv/bin/python \
+            --extra-index-url https://download.pytorch.org/whl/cpu \
+            -e ".[cpu]"; \
     fi
 
 # ── Stage 2: runtime ─────────────────────────────────────────────
@@ -75,30 +78,28 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /app
 
-# Копируем venv из builder-стадии
+# uv в runtime тоже нужен (для возможного запуска скриптов)
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
+
+# Копируем venv из builder
 COPY --from=builder /app/.venv .venv
 
-# Копируем исходники
+# Копируем исходники и конфиги
 COPY src/ src/
 COPY config/ config/
 COPY scripts/Modelfile scripts/Modelfile
 
-# Создаём директории для данных
+# Создаём директории для данных (монтируются как volumes)
 RUN mkdir -p data/logs assets/videos
-
-# .env монтируется снаружи — не копируем
-# assets/videos монтируется снаружи
 
 ENV PATH="/app/.venv/bin:$PATH"
 ENV PYTHONPATH="/app"
 ENV PYTHONUNBUFFERED=1
 ENV PYTHONDONTWRITEBYTECODE=1
 
-# Для pygame без дисплея (headless / X11-форвардинг)
+# Для pygame без дисплея (headless / X11-forwarding)
 ENV SDL_VIDEODRIVER=dummy
 ENV SDL_AUDIODRIVER=dummy
-
-EXPOSE 8080
 
 # Точка входа — оффлайн-демо по умолчанию
 CMD ["python", "-m", "src.main_offline", "--no-camera", "--simulate-voice"]

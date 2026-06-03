@@ -20,7 +20,6 @@ faster-whisper large-v3 + Silero-VAD + стоматологический лек
 from __future__ import annotations
 
 import asyncio
-from typing import Optional
 
 import numpy as np
 import sounddevice as sd
@@ -135,7 +134,7 @@ class SpeechToText:
         return text
 
     # ------------------------------------------------------------------
-    async def _record_until_silence(self, timeout: int) -> Optional[np.ndarray]:
+    async def _record_until_silence(self, timeout: int) -> np.ndarray | None:
         """Запись с детекцией конца фразы по Silero-VAD (или энергии — fallback)."""
         chunks: list[np.ndarray] = []
         chunk_size = 512  # 32 ms @ 16 kHz — оптимум для Silero-VAD
@@ -167,7 +166,7 @@ class SpeechToText:
                     break
                 try:
                     chunk = await asyncio.wait_for(q.get(), timeout=1.0)
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     continue
 
                 chunks.append(chunk.flatten())

@@ -11,7 +11,6 @@ knowledge_base.py
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Optional
 
 
 @dataclass(frozen=True)
@@ -184,7 +183,7 @@ KB: tuple[Procedure, ...] = (
 # ──────────────────────────────────────────────────────────────────────
 # Поиск
 # ──────────────────────────────────────────────────────────────────────
-def find_procedure(query: str) -> Optional[Procedure]:
+def find_procedure(query: str) -> Procedure | None:
     """Грубый поиск по названию/синонимам. Возвращает первую находку."""
     if not query:
         return None
@@ -202,8 +201,8 @@ def find_procedure(query: str) -> Optional[Procedure]:
     return None
 
 
-def list_procedures(specialty: Optional[str] = None,
-                    pediatric: Optional[bool] = None) -> list[Procedure]:
+def list_procedures(specialty: str | None = None,
+                    pediatric: bool | None = None) -> list[Procedure]:
     """Список процедур с фильтрами."""
     items = list(KB)
     if specialty:
