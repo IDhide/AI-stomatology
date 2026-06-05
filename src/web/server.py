@@ -35,6 +35,7 @@ from loguru import logger
 from ..dikidi.client_stub import DikidiClientStub
 from ..dikidi.sim_client import SimDikidiClient
 from ..core.conversation_logger import ConversationLogger
+from . import responder
 
 WEB_DIR = Path(__file__).resolve().parent.parent.parent / "web"
 ASSETS_DIR = Path(__file__).resolve().parent.parent.parent / "assets" / "videos"
@@ -203,6 +204,36 @@ async def trigger(request: web.Request) -> web.Response:
     return web.json_response({"ok": True})
 
 
+async def api_greeting(request: web.Request) -> web.Response:
+    """Текст приветствия Оливии (браузер озвучит через TTS)."""
+    return web.json_response({"text": responder.greeting()})
+
+
+async def api_message(request: web.Request) -> web.Response:
+    """
+    Интерактивный режим: браузер распознал речь пациента (STT) и прислал текст.
+    Возвращаем реплику Оливии — браузер озвучит её (TTS).
+    """
+    try:
+        data = await request.json()
+    except Exception:
+        return web.json_response({"error": "bad json"}, status=400)
+    user_text = (data.get("text") or "").strip()
+    logger.info(f"🎤 пациент: {user_text!r}")
+    answer = responder.reply(user_text)
+    logger.info(f"💬 Оливия: {answer!r}")
+
+    conv: ConversationLogger = request.app["conv"]
+    cid = request.app.get("cid")
+    if cid is None:
+        cid = conv.start_conversation()
+        request.app["cid"] = cid
+    if user_text:
+        conv.log_message(cid, "user", user_text)
+    conv.log_message(cid, "assistant", answer)
+    return web.json_response({"reply": answer})
+
+
 async def index(request: web.Request) -> web.Response:
     return web.FileResponse(WEB_DIR / "index.html")
 
@@ -228,12 +259,15 @@ def build_app(auto_loop: bool = True) -> web.Application:
 
     app["bus"] = bus
     app["scenario"] = scenario
+    app["conv"] = conv
     app["auto_loop"] = auto_loop
 
     app.add_routes([
         web.get("/", index),
         web.get("/api/events", sse_events),
         web.post("/api/trigger", trigger),
+        web.get("/api/greeting", api_greeting),
+        web.post("/api/message", api_message),
     ])
     # статика
     app.router.add_static("/", path=str(WEB_DIR), name="web")
@@ -255,15 +289,18 @@ def build_app(auto_loop: bool = True) -> web.Application:
 
 
 def main(argv: list[str] | None = None) -> int:
-    p = argparse.ArgumentParser(description="Smile.AI веб-киоск + симуляция")
+    p = argparse.ArgumentParser(description="Smile.AI веб-киоск")
     p.add_argument("--host", default="127.0.0.1")
     p.add_argument("--port", type=int, default=8080)
+    p.add_argument("--demo", action="store_true",
+                   help="прокручивать заготовленный диалог (без микрофона) — для показа визуала")
     p.add_argument("--no-loop", action="store_true",
-                   help="не запускать авто-сценарий (триггер вручную через /api/trigger)")
+                   help="(устарело) то же, что без --demo: интерактивный режим")
     args = p.parse_args(argv)
 
-    logger.info(f"🦷 Smile.AI веб-киоск: http://{args.host}:{args.port}")
-    web.run_app(build_app(auto_loop=not args.no_loop),
+    mode = "ДЕМО-сценарий" if args.demo else "интерактивный (микрофон + голос)"
+    logger.info(f"🦷 Smile.AI веб-киоск: http://{args.host}:{args.port} | режим: {mode}")
+    web.run_app(build_app(auto_loop=args.demo),
                 host=args.host, port=args.port, print=None)
     return 0
 

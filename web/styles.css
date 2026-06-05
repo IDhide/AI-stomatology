@@ -187,3 +187,48 @@ body[data-mode="greeting"]  #hud-dot,
 body[data-mode="speaking"]  #hud-dot { background: var(--violet-bright); box-shadow: 0 0 10px var(--violet-glow); }
 body[data-mode="listening"] #hud-dot { background: #36c79b; box-shadow: 0 0 10px rgba(54,199,155,0.6); }
 body[data-mode="thinking"]  #hud-dot { background: #f2a13c; box-shadow: 0 0 10px rgba(242,161,60,0.6); }
+
+/* ── Оверлей старта (жест нужен для микрофона и звука) ───── */
+#start-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(5, 6, 13, 0.72);
+  backdrop-filter: blur(6px);
+  cursor: pointer;
+  transition: opacity 0.5s ease;
+}
+#start-overlay.hide { opacity: 0; }
+#start-overlay .ov-inner {
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 22px;
+  padding: 0 24px;
+}
+#start-overlay .ov-circle {
+  width: 22vmin;
+  height: 22vmin;
+  border-radius: 50%;
+  background: radial-gradient(circle at 38% 34%, var(--violet-bright) 0%, var(--violet) 48%, #4b1aa3 100%);
+  box-shadow: 0 0 60px 8px var(--violet-glow), 0 0 140px 24px rgba(123,47,247,0.3);
+  animation: ovpulse 2.2s ease-in-out infinite;
+}
+@keyframes ovpulse {
+  0%, 100% { transform: scale(0.94); }
+  50%      { transform: scale(1.04); }
+}
+#start-overlay .ov-title {
+  font-size: clamp(20px, 3vmin, 34px);
+  font-weight: 600;
+  color: #eaf2ff;
+}
+#start-overlay .ov-sub {
+  font-size: clamp(13px, 1.7vmin, 18px);
+  color: rgba(200, 215, 240, 0.6);
+  letter-spacing: 0.02em;
+}
