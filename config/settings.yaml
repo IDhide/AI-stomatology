@@ -6,8 +6,10 @@ app:
   name: "Smile.AI Dental Assistant"
   version: "1.1.0"
   debug: false
-  clinic_name: "Клиника Smile"
-  address: "г. Москва, ул. Тверская, д. 5"
+  clinic_name: "Стоматология №1"
+  address: "г. Санкт-Петербург, ул. Ивана Фомина, д. 14 к1, этаж 2"
+  phone: "89119263215"
+  phone_city: "8(812)9263215"
 
 # ────────── Камера и детекция присутствия ──────────
 camera:
@@ -76,14 +78,14 @@ dental:
   enable_humor: true
   humor_probability: 0.45        # вероятность сказать шутку при подходящем поводе
   min_turns_between_jokes: 3
-  working_hours:
-    mon: ["09:00", "21:00"]
-    tue: ["09:00", "21:00"]
-    wed: ["09:00", "21:00"]
-    thu: ["09:00", "21:00"]
-    fri: ["09:00", "21:00"]
-    sat: ["10:00", "20:00"]
-    sun: ["10:00", "18:00"]
+  working_hours:                 # клиника работает ежедневно с 12 до 21
+    mon: ["12:00", "21:00"]
+    tue: ["12:00", "21:00"]
+    wed: ["12:00", "21:00"]
+    thu: ["12:00", "21:00"]
+    fri: ["12:00", "21:00"]
+    sat: ["12:00", "21:00"]
+    sun: ["12:00", "21:00"]
   alert_on_urgent: true          # сигнал дежурному при острой боли
   alert_channel: "telegram"      # telegram | email | none
 
