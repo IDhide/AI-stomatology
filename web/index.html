@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Smile.AI — администратор клиники</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <!-- Фоновый слой: видео медуз или процедурный «космос» -->
+  <div id="bg-layer">
+    <video id="jellyfish" loop muted playsinline></video>
+    <canvas id="bg-canvas"></canvas>
+  </div>
+
+  <!-- Затемнение под аватар (появляется в активных режимах) -->
+  <div id="dim"></div>
+
+  <!-- Центральный аватар: круг + аудио-волна -->
+  <div id="stage">
+    <div id="avatar">
+      <canvas id="wave"></canvas>
+    </div>
+    <div id="status-label"></div>
+  </div>
+
+  <!-- Субтитры -->
+  <div id="subtitle"></div>
+
+  <!-- Служебная плашка состояния (вверху слева) -->
+  <div id="hud">
+    <span id="hud-dot"></span>
+    <span id="hud-text">IDLE</span>
+  </div>
+
+  <script src="app.js"></script>
+  <script src="camera.js"></script>
+</body>
+</html>

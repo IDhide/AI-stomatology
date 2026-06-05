@@ -13,8 +13,17 @@ class ConversationLogger:
     """Логирование разговоров с клиентами"""
 
     def __init__(self, config):
-        self.enabled = config["enabled"]
-        self.log_path = Path(config["path"])
+        # Принимаем либо dict из settings.yaml (секция logging.conversations),
+        # либо просто строку-путь (как делает main_offline.py).
+        if isinstance(config, str):
+            self.enabled = True
+            path = config
+        else:
+            self.enabled = config.get("enabled", True)
+            # исторически в YAML ключ называется jsonl_path, старый код ждал path
+            path = config.get("path") or config.get("jsonl_path") \
+                or "data/logs/conversations.jsonl"
+        self.log_path = Path(path)
 
         if self.enabled:
             self.log_path.parent.mkdir(parents=True, exist_ok=True)
