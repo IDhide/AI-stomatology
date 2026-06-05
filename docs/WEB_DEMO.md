@@ -10,7 +10,40 @@
 
 ---
 
-## 1. Установка зависимостей (минимум)
+## 0. Запуск через Docker (рекомендуется для теста)
+
+Лёгкий стенд из двух контейнеров, только pure-python зависимости — без GPU,
+Ollama, камеры и pygame. Два сервиса общаются по внутренней сети Docker:
+
+```
+web (8080)  ──HTTP──►  dikidi-sim (8089)
+   киоск/визуал          симулятор DIKIDI API
+```
+
+```bash
+# собрать и запустить
+docker compose -f docker-compose.demo.yml up --build
+#   или короче:
+make demo
+
+# открыть в браузере
+#   http://localhost:8080            — визуал + авто-сценарий
+#   http://localhost:8080/?camera=1  — с распознаванием людей через веб-камеру
+#   http://localhost:8089/healthz    — проверка симулятора DIKIDI
+
+# остановить
+docker compose -f docker-compose.demo.yml down     # или: make demo-down
+```
+
+Логи диалогов пишутся в `./data/logs/` (примонтировано наружу). Чтобы
+показать настоящее видео медуз — положите файл в `./assets/videos/jellyfish.mp4`.
+
+> Полный боевой стек (Ollama + torch + pygame) — в `docker-compose.yml`.
+> Здесь же — именно лёгкая версия для быстрой проверки визуала и логики.
+
+---
+
+## 1. Запуск без Docker — установка зависимостей (минимум)
 
 ```bash
 pip3 install -r requirements-minimal.txt

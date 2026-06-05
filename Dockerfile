@@ -24,6 +24,39 @@ ENV UV_PYTHON_DOWNLOADS=never
 
 WORKDIR /app
 
+# ── Stage: web (лёгкий веб-демо: киоск + симулятор DIKIDI) ─────────
+# Только pure-python зависимости. Без torch/pygame/opencv/ollama.
+# Используется в docker-compose.demo.yml для быстрого тестового запуска.
+FROM base AS web
+
+RUN uv venv --python python3 .venv
+
+RUN uv pip install --python .venv/bin/python \
+    "loguru>=0.7.2" \
+    "pyyaml>=6.0.1" \
+    "pydantic>=2.5" \
+    "python-dotenv>=1.0" \
+    "aiohttp>=3.9"
+
+COPY src/ src/
+COPY config/ config/
+COPY web/ web/
+
+RUN mkdir -p data/logs assets/videos
+
+ENV PATH="/app/.venv/bin:$PATH"
+ENV PYTHONPATH="/app"
+ENV PYTHONUNBUFFERED=1
+ENV PYTHONDONTWRITEBYTECODE=1
+
+# Smoke-тест импортов веб-стека
+RUN python -c "import src.web.server, src.dikidi.fake_server; print('web stage OK')"
+
+EXPOSE 8080 8089
+
+# По умолчанию — веб-киоск (в compose переопределяется command-ой)
+CMD ["python", "-m", "src.web.server", "--host", "0.0.0.0", "--port", "8080"]
+
 # ── Stage 2: deps (CI target) ─────────────────────────────────────
 # Только pure-python пакеты, без torch/ML/build-tools
 FROM base AS deps

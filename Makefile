@@ -4,7 +4,9 @@
 # ════════════════════════════════════════════════════════════════════
 
 .PHONY: help setup setup-gpu setup-dev run run-sim run-window prod \
-        docker docker-gpu docker-down lint test clean
+        docker docker-gpu docker-down demo demo-down demo-logs lint test clean
+
+COMPOSE_DEMO = docker compose -f docker-compose.demo.yml
 
 help: ## Показать этот список
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
@@ -42,6 +44,16 @@ docker-gpu: ## Сборка и запуск через Docker (GPU)
 
 docker-down: ## Остановить Docker-контейнеры
 	bash scripts/run.sh docker-down
+
+# ── Лёгкий веб-демо (визуал + симулятор DIKIDI), без GPU/Ollama ────
+demo: ## Поднять демо-стенд (web + dikidi-sim) → http://localhost:8080
+	$(COMPOSE_DEMO) up --build
+
+demo-down: ## Остановить демо-стенд
+	$(COMPOSE_DEMO) down
+
+demo-logs: ## Логи демо-стенда
+	$(COMPOSE_DEMO) logs -f
 
 # ── Разработка ────────────────────────────────────────────────────
 lint: ## Проверка кода (ruff)

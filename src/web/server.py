@@ -25,6 +25,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import os
 import time
 from pathlib import Path
 
@@ -32,6 +33,7 @@ from aiohttp import web
 from loguru import logger
 
 from ..dikidi.client_stub import DikidiClientStub
+from ..dikidi.sim_client import SimDikidiClient
 from ..core.conversation_logger import ConversationLogger
 
 WEB_DIR = Path(__file__).resolve().parent.parent.parent / "web"
@@ -214,7 +216,17 @@ async def index(request: web.Request) -> web.Response:
 def build_app(auto_loop: bool = True) -> web.Application:
     app = web.Application()
     bus = EventBus()
-    dikidi = DikidiClientStub(seed=7)
+
+    # Источник данных DIKIDI: HTTP-симулятор (отдельный контейнер) либо
+    # in-process заглушка. Включается переменной окружения DIKIDI_BASE_URL.
+    dikidi_url = os.getenv("DIKIDI_BASE_URL", "").strip()
+    if dikidi_url:
+        dikidi = SimDikidiClient(dikidi_url)
+        logger.info(f"DIKIDI backend: HTTP → {dikidi_url}")
+    else:
+        dikidi = DikidiClientStub(seed=7)
+        logger.info("DIKIDI backend: in-process stub")
+
     conv = ConversationLogger({"enabled": True,
                                "jsonl_path": "data/logs/conversations.jsonl"})
     scenario = KioskScenario(bus, dikidi, conv)

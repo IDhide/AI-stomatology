@@ -1,0 +1,61 @@
+# ════════════════════════════════════════════════════════════════════
+#  Smile.AI — ЛЁГКИЙ ДЕМО-СТЕНД (docker compose)
+#
+#  Два контейнера, только pure-python зависимости. Без GPU/Ollama/камеры.
+#  Нужен, чтобы быстро посмотреть визуал и работу симуляции DIKIDI.
+#
+#    dikidi-sim — HTTP-симулятор DIKIDI API   → http://localhost:8089
+#    web        — веб-киоск (визуал + сценарий) → http://localhost:8080
+#                 ходит за данными в dikidi-sim по внутренней сети docker
+#
+#  Запуск:
+#    docker compose -f docker-compose.demo.yml up --build
+#    # затем открыть в браузере http://localhost:8080
+#
+#  С веб-камерой (распознавание людей):  http://localhost:8080/?camera=1
+#  Остановить:                           docker compose -f docker-compose.demo.yml down
+# ════════════════════════════════════════════════════════════════════
+
+services:
+
+  # ── Симулятор DIKIDI API ─────────────────────────────────────────
+  dikidi-sim:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: web
+    image: smile-ai:web
+    container_name: smile-dikidi-sim
+    command: ["python", "-m", "src.dikidi.fake_server", "--host", "0.0.0.0", "--port", "8089"]
+    ports:
+      - "8089:8089"
+    healthcheck:
+      test: ["CMD", "python", "-c",
+             "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8089/healthz').status==200 else 1)"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+    restart: unless-stopped
+
+  # ── Веб-киоск (визуал + сценарий) ────────────────────────────────
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: web
+    image: smile-ai:web
+    container_name: smile-web
+    command: ["python", "-m", "src.web.server", "--host", "0.0.0.0", "--port", "8080"]
+    environment:
+      DIKIDI_BASE_URL: "http://dikidi-sim:8089"   # общение между контейнерами
+      PYTHONUNBUFFERED: "1"
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./data:/app/data       # логи диалогов наружу
+      - ./assets:/app/assets   # сюда можно положить jellyfish.mp4
+    depends_on:
+      dikidi-sim:
+        condition: service_healthy
+    restart: unless-stopped
