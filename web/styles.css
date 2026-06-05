@@ -1,0 +1,189 @@
+/* ============================================================
+   Smile.AI — киоск-интерфейс администратора клиники
+   Фон: медузы/космос · Центр: пульсирующий круг с аудио-волной
+   Палитра под референс: фиолетовый круг, белая волна, тёмный фон
+   ============================================================ */
+
+:root {
+  --violet: #7b2ff7;
+  --violet-bright: #9d4bff;
+  --violet-glow: rgba(123, 47, 247, 0.55);
+  --wave: #ffffff;
+  --user: #9fe1cb;
+  --bot: #c8e6ff;
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+html, body {
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: #05060d;
+  font-family: "Inter", "Segoe UI", "DejaVu Sans", Arial, sans-serif;
+  color: #eaf2ff;
+  cursor: none;
+}
+
+/* ── Фоновый слой ───────────────────────────────────────── */
+#bg-layer {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+}
+#jellyfish {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: none;            /* включается из JS, если есть файл видео */
+}
+#bg-canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+
+/* ── Затемнение под аватар ──────────────────────────────── */
+#dim {
+  position: fixed;
+  inset: 0;
+  z-index: 1;
+  background: radial-gradient(circle at 50% 46%, rgba(5,6,13,0.35) 0%, rgba(5,6,13,0.82) 60%, rgba(5,6,13,0.95) 100%);
+  opacity: 0;
+  transition: opacity 0.8s ease;
+  pointer-events: none;
+}
+body[data-mode="greeting"]  #dim,
+body[data-mode="listening"] #dim,
+body[data-mode="thinking"]  #dim,
+body[data-mode="speaking"]  #dim { opacity: 1; }
+
+/* ── Сцена / аватар ─────────────────────────────────────── */
+#stage {
+  position: fixed;
+  inset: 0;
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 36px;
+}
+
+#avatar {
+  position: relative;
+  width: 42vmin;
+  height: 42vmin;
+  border-radius: 50%;
+  background:
+    radial-gradient(circle at 38% 34%, var(--violet-bright) 0%, var(--violet) 45%, #4b1aa3 100%);
+  box-shadow:
+    0 0 0 2px rgba(255,255,255,0.06),
+    0 0 60px 8px var(--violet-glow),
+    0 0 160px 30px rgba(123, 47, 247, 0.35),
+    inset 0 0 80px rgba(0,0,0,0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transform: scale(0.55);
+  opacity: 0;
+  transition: opacity 0.7s ease, transform 0.5s ease;
+  will-change: transform;
+}
+/* в активных режимах круг проявляется */
+body[data-mode="greeting"]  #avatar,
+body[data-mode="listening"] #avatar,
+body[data-mode="thinking"]  #avatar,
+body[data-mode="speaking"]  #avatar { opacity: 1; transform: scale(1); }
+
+/* лёгкий ореол-кольцо */
+#avatar::after {
+  content: "";
+  position: absolute;
+  inset: -6%;
+  border-radius: 50%;
+  border: 1px solid rgba(157, 75, 255, 0.35);
+  filter: blur(0.5px);
+}
+
+#wave {
+  width: 86%;
+  height: 86%;
+}
+
+/* цветовые акценты по режимам */
+body[data-mode="thinking"] #avatar {
+  background: radial-gradient(circle at 38% 34%, #ffcf7a 0%, #f2a13c 45%, #b8701d 100%);
+  box-shadow: 0 0 60px 8px rgba(242,161,60,0.45), 0 0 160px 30px rgba(242,161,60,0.25), inset 0 0 80px rgba(0,0,0,0.45);
+}
+body[data-mode="listening"] #avatar {
+  background: radial-gradient(circle at 38% 34%, #8affd6 0%, #36c79b 45%, #1b8f6b 100%);
+  box-shadow: 0 0 60px 8px rgba(54,199,155,0.45), 0 0 160px 30px rgba(54,199,155,0.22), inset 0 0 80px rgba(0,0,0,0.45);
+}
+
+/* ── Подпись статуса ────────────────────────────────────── */
+#status-label {
+  font-size: clamp(18px, 2.4vmin, 30px);
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: rgba(230, 238, 250, 0.82);
+  opacity: 0;
+  transition: opacity 0.4s ease;
+  min-height: 1.4em;
+}
+body[data-mode="greeting"]  #status-label,
+body[data-mode="listening"] #status-label,
+body[data-mode="thinking"]  #status-label,
+body[data-mode="speaking"]  #status-label { opacity: 1; }
+
+/* ── Субтитры ───────────────────────────────────────────── */
+#subtitle {
+  position: fixed;
+  left: 50%;
+  bottom: 6vh;
+  transform: translateX(-50%);
+  z-index: 3;
+  max-width: 80vw;
+  padding: 18px 34px;
+  border-radius: 18px;
+  background: rgba(10, 18, 36, 0.78);
+  backdrop-filter: blur(8px);
+  font-size: clamp(20px, 2.8vmin, 38px);
+  line-height: 1.35;
+  text-align: center;
+  opacity: 0;
+  transition: opacity 0.35s ease;
+}
+#subtitle.show { opacity: 1; }
+#subtitle.user { color: var(--user); }
+#subtitle.bot  { color: var(--bot); }
+
+/* ── HUD состояния ──────────────────────────────────────── */
+#hud {
+  position: fixed;
+  top: 22px;
+  left: 26px;
+  z-index: 4;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 14px;
+  letter-spacing: 0.14em;
+  color: rgba(200, 215, 240, 0.55);
+  text-transform: uppercase;
+}
+#hud-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: #3a4a66;
+  box-shadow: 0 0 8px rgba(123,47,247,0.0);
+}
+body[data-mode="idle"]      #hud-dot { background: #3a4a66; }
+body[data-mode="greeting"]  #hud-dot,
+body[data-mode="speaking"]  #hud-dot { background: var(--violet-bright); box-shadow: 0 0 10px var(--violet-glow); }
+body[data-mode="listening"] #hud-dot { background: #36c79b; box-shadow: 0 0 10px rgba(54,199,155,0.6); }
+body[data-mode="thinking"]  #hud-dot { background: #f2a13c; box-shadow: 0 0 10px rgba(242,161,60,0.6); }
