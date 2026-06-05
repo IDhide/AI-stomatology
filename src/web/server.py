@@ -25,6 +25,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import os
 import time
 from pathlib import Path
 
@@ -32,6 +33,7 @@ from aiohttp import web
 from loguru import logger
 
 from ..dikidi.client_stub import DikidiClientStub
+from ..dikidi.sim_client import SimDikidiClient
 from ..core.conversation_logger import ConversationLogger
 
 WEB_DIR = Path(__file__).resolve().parent.parent.parent / "web"
@@ -120,38 +122,33 @@ class KioskScenario:
         logger.info("👤 СИМУЛЯЦИЯ КАМЕРЫ: лицо обнаружено → запуск диалога")
 
         await self.mode("greeting")
-        await self.say("Здравствуйте! Я Лена, виртуальный администратор клиники "
-                       "Smile. Чем могу помочь?")
+        await self.say("Здравствуйте, меня зовут Оливия, администратор клиники "
+                       "«Стоматология номер один». Подскажите, что вас беспокоит?")
 
-        await self.user("Здравствуйте! У меня кариес, хочу записаться на лечение.")
+        await self.user("Хочу поставить виниры, сколько это стоит?")
         await self.think()
-        services = await self.dikidi.get_services(limit=20)
-        caries = next((s for s in services if "кариес" in s["name"].lower()), None)
-        price = caries["price"] if caries else 4500
-        await self.say(f"Конечно. Лечение кариеса у нас от {price} рублей, "
-                       "занимает около часа. Давайте подберём удобное время.")
+        # цены — из персоны (промпта), сейчас действует акция на E-Max
+        await self.say("Сейчас у нас акция на виниры E-Max: от двадцати восьми с "
+                       "половиной до тридцати пяти тысяч под ключ — входят все "
+                       "манипуляции, сканирование и работа врача. Точную стоимость "
+                       "врач назовёт на бесплатной консультации. Подобрать вам день?")
 
-        await self.user("Давайте на этой неделе, ближе к вечеру.")
+        await self.user("Да, давайте на этой неделе вечером.")
         await self.think()
+        # окна смотрим в DIKIDI, но время НЕ подтверждаем — согласует администратор
         slots = await self.dikidi.get_available_slots("терапевт", limit=3)
         if slots:
-            human = "; ".join(s["human"] for s in slots[:3])
-            await self.say(f"Есть свободные окна: {human}. Какое вам удобно?")
+            human = "; ".join(s["human"] for s in slots[:2])
+            await self.say(f"Подойдёт, например, {human}. Назовите ваше имя и "
+                           "продиктуйте номер, администратор перезвонит и согласует время?")
         else:
-            await self.say("Сейчас уточню расписание у терапевта…")
+            await self.say("Подберём удобное время. Назовите ваше имя и продиктуйте "
+                           "номер, администратор перезвонит и согласует запись?")
 
-        await self.user("Давайте первое.")
+        await self.user("Мария, восемь девятьсот девяносто девять, ноль, ноль, ноль...")
         await self.think(0.9)
-        booked = None
-        if slots:
-            booked = await self.dikidi.create_booking(
-                slots[0]["slot_id"], "caries_simple",
-                client_name="Гость", client_phone="+79990000000")
-        if booked and booked.get("ok"):
-            await self.say(f"Готово! Записала вас на {booked['human']}. "
-                           "Подойдите, пожалуйста, за 10 минут до приёма. До встречи!")
-        else:
-            await self.say("Записала вас. Подойдите за 10 минут до приёма. До встречи!")
+        await self.say("Записала, Мария. Администратор перезвонит и согласует точное "
+                       "время консультации. Остались ещё вопросы?")
 
         await asyncio.sleep(0.8)
         logger.info("👋 СИМУЛЯЦИЯ КАМЕРЫ: пациент ушёл → возврат в режим ожидания")
@@ -214,7 +211,17 @@ async def index(request: web.Request) -> web.Response:
 def build_app(auto_loop: bool = True) -> web.Application:
     app = web.Application()
     bus = EventBus()
-    dikidi = DikidiClientStub(seed=7)
+
+    # Источник данных DIKIDI: HTTP-симулятор (отдельный контейнер) либо
+    # in-process заглушка. Включается переменной окружения DIKIDI_BASE_URL.
+    dikidi_url = os.getenv("DIKIDI_BASE_URL", "").strip()
+    if dikidi_url:
+        dikidi = SimDikidiClient(dikidi_url)
+        logger.info(f"DIKIDI backend: HTTP → {dikidi_url}")
+    else:
+        dikidi = DikidiClientStub(seed=7)
+        logger.info("DIKIDI backend: in-process stub")
+
     conv = ConversationLogger({"enabled": True,
                                "jsonl_path": "data/logs/conversations.jsonl"})
     scenario = KioskScenario(bus, dikidi, conv)
