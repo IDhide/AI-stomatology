@@ -60,23 +60,31 @@
   }
 
   // ── общий шаг: отправить текст пациента → ответ голосом ──
+  // Возвращает true, если Оливия ответила; false — если реплику проигнорировали
+  // (нерелевантная/фоновая речь — тогда молчим и продолжаем слушать).
   async function respondTo(said) {
-    if (!said) return;
-    setSub("вы: " + said, "user");
+    if (!said) return false;
     setMode("thinking");
     hudText.textContent = "THINKING…";
-    let answer = "Минутку.";
+    let data = {};
     try {
       const r = await fetch("/api/message", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ text: said }),
       });
-      answer = (await r.json()).reply || answer;
+      data = await r.json();
     } catch (_) {
-      answer = "Извините, связь прервалась. Повторите, пожалуйста?";
+      data = { reply: "Извините, связь прервалась. Повторите, пожалуйста?" };
     }
-    await speak(answer);
+    if (data.ignored || !data.reply) {
+      // нерелевантная речь — не показываем её и молчим
+      setSub("", "user");
+      return false;
+    }
+    setSub("вы: " + said, "user");
+    await speak(data.reply);
+    return true;
   }
 
   // ════════════════════════════════════════════════════════

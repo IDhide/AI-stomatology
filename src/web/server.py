@@ -219,18 +219,30 @@ async def api_message(request: web.Request) -> web.Response:
     except Exception:
         return web.json_response({"error": "bad json"}, status=400)
     user_text = (data.get("text") or "").strip()
+    session = request.app["session"]
+
+    # Фильтр релевантности: на фоновую болтовню рядом с экраном — молчим.
+    if not responder.is_relevant(user_text):
+        session["offtopic"] += 1
+        logger.info(f"🙊 нерелевантно ({session['offtopic']}): {user_text!r}")
+        # после нескольких нерелевантных подряд — один мягкий повод вернуться к теме
+        if session["offtopic"] == 3:
+            session["offtopic"] = 0
+            nudge = ("Если вам нужна стоматология — подскажите, что вас беспокоит, "
+                     "и я помогу с записью?")
+            return web.json_response({"reply": nudge, "nudge": True})
+        return web.json_response({"reply": "", "ignored": True})
+
+    session["offtopic"] = 0
     logger.info(f"🎤 пациент: {user_text!r}")
     answer = responder.reply(user_text)
     logger.info(f"💬 Оливия: {answer!r}")
 
     conv: ConversationLogger = request.app["conv"]
-    cid = request.app.get("cid")
-    if cid is None:
-        cid = conv.start_conversation()
-        request.app["cid"] = cid
-    if user_text:
-        conv.log_message(cid, "user", user_text)
-    conv.log_message(cid, "assistant", answer)
+    if session.get("cid") is None:
+        session["cid"] = conv.start_conversation()
+    conv.log_message(session["cid"], "user", user_text)
+    conv.log_message(session["cid"], "assistant", answer)
     return web.json_response({"reply": answer})
 
 
@@ -285,6 +297,8 @@ def build_app(auto_loop: bool = True) -> web.Application:
     app["scenario"] = scenario
     app["conv"] = conv
     app["auto_loop"] = auto_loop
+    # состояние сессии киоска (изменяемый dict — без мутации app после старта)
+    app["session"] = {"cid": None, "offtopic": 0}
 
     app.add_routes([
         web.get("/", index),

@@ -73,14 +73,33 @@ def transcribe(audio_bytes: bytes, suffix: str = ".webm") -> tuple[str, str | No
         with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as f:
             f.write(audio_bytes)
             tmp_path = f.name
+        params = dict(
+            language="ru",
+            beam_size=5,
+            vad_filter=True,
+            condition_on_previous_text=False,  # меньше «галлюцинаций» на шуме
+            no_speech_threshold=0.6,
+            temperature=0.0,
+        )
         try:
-            segments, _info = model.transcribe(
-                tmp_path, language="ru", vad_filter=True, beam_size=5
-            )
+            segments, _info = model.transcribe(tmp_path, **params)
         except Exception:
             # VAD требует onnxruntime — если его нет, пробуем без него
-            segments, _info = model.transcribe(tmp_path, language="ru", beam_size=5)
-        text = " ".join(s.text.strip() for s in segments).strip()
+            params.pop("vad_filter", None)
+            segments, _info = model.transcribe(tmp_path, **params)
+
+        # отсекаем сегменты-шум: высокая вероятность «нет речи» или низкая
+        # уверенность модели (типичные галлюцинации на фоновом гуле)
+        kept = []
+        for s in segments:
+            no_speech = getattr(s, "no_speech_prob", 0.0)
+            avg_lp = getattr(s, "avg_logprob", 0.0)
+            if no_speech > 0.6:
+                continue
+            if avg_lp < -1.2:
+                continue
+            kept.append(s.text.strip())
+        text = " ".join(kept).strip()
         return text, None
     except Exception as e:
         logger.exception("STT transcribe error")
