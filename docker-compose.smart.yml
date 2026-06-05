@@ -1,0 +1,66 @@
+# ════════════════════════════════════════════════════════════════════
+#  Smile.AI — НАДСТРОЙКА «умный мозг» (Ollama LLM)
+#
+#  Добавляет к демо-стенду настоящий языковой модель-мозг: Оливия начинает
+#  понимать свободную речь и держать контекст диалога (а не отвечать по
+#  ключевым словам). Применяется ПОВЕРХ docker-compose.demo.yml.
+#
+#  Запуск:
+#    docker compose -f docker-compose.demo.yml -f docker-compose.smart.yml up --build
+#    #  короче:  make smart
+#    #  с STT для Firefox:  WITH_STT=1 make smart
+#    #  другая модель:      OLLAMA_MODEL=qwen2.5:7b-instruct make smart
+#
+#  Первый запуск качает модель (~1.9 ГБ для qwen2.5:3b) — подождите.
+# ════════════════════════════════════════════════════════════════════
+
+services:
+
+  # ── Ollama (языковая модель) ─────────────────────────────────────
+  ollama:
+    image: ollama/ollama:latest
+    container_name: smile-ollama
+    volumes:
+      - ollama_data:/root/.ollama
+    ports:
+      - "11434:11434"
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+    restart: unless-stopped
+
+  # ── Разовая загрузка модели ──────────────────────────────────────
+  ollama-pull:
+    image: ollama/ollama:latest
+    container_name: smile-ollama-pull
+    environment:
+      OLLAMA_HOST: "http://ollama:11434"
+    entrypoint:
+      - sh
+      - -c
+      - 'until ollama list >/dev/null 2>&1; do echo "ждём ollama…"; sleep 2; done; ollama pull ${OLLAMA_MODEL:-qwen2.5:3b}'
+    depends_on:
+      ollama:
+        condition: service_healthy
+    restart: "no"
+
+  # ── Веб-киоск: подключаем мозг ───────────────────────────────────
+  web:
+    environment:
+      DIKIDI_BASE_URL: "http://dikidi-sim:8089"
+      OLLAMA_HOST: "http://ollama:11434"
+      OLLAMA_MODEL: "${OLLAMA_MODEL:-qwen2.5:3b}"
+      STT_MODEL: "${STT_MODEL:-small}"
+      PYTHONUNBUFFERED: "1"
+    depends_on:
+      dikidi-sim:
+        condition: service_healthy
+      ollama-pull:
+        condition: service_completed_successfully
+
+volumes:
+  ollama_data:
+    driver: local

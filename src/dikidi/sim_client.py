@@ -48,6 +48,30 @@ class SimDikidiClient:
             )
         return self._session
 
+    async def find_client(self, name: str = "", phone: str = "") -> dict:
+        """Поиск клиента в симуляторе DIKIDI по телефону."""
+        if not phone:
+            return {"found": False}
+        s = await self._sess()
+        try:
+            async with s.get(f"{self.base_url}/v1/clients/search",
+                             params={"phone": phone}) as r:
+                data = (await r.json()).get("data", [])
+        except Exception:
+            return {"found": False}
+        if data:
+            c = data[0]
+            return {"found": True, "client_id": c.get("id"),
+                    "name": c.get("name"), "phone": c.get("phone")}
+        return {"found": False}
+
+    async def cancel_booking(self, booking_id: str) -> dict:
+        # в симуляторе отмена не реализована — понятный ответ для LLM
+        return {"ok": False, "error": "not_supported_in_sim"}
+
+    async def reschedule_booking(self, booking_id: str, new_slot_id: str) -> dict:
+        return {"ok": False, "error": "not_supported_in_sim"}
+
     async def get_services(self, limit: int = 8) -> list[dict]:
         s = await self._sess()
         async with s.get(f"{self.base_url}/v1/company/services") as r:

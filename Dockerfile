@@ -40,7 +40,8 @@ RUN uv pip install --python .venv/bin/python \
     "pyyaml>=6.0.1" \
     "pydantic>=2.5" \
     "python-dotenv>=1.0" \
-    "aiohttp>=3.9"
+    "aiohttp>=3.9" \
+    "requests>=2.31"
 
 # Опционально — серверный STT (тяжёлая зависимость, модель качается в рантайме)
 RUN if [ "$WITH_STT" = "1" ]; then \

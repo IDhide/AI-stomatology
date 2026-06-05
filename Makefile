@@ -55,6 +55,13 @@ demo-down: ## Остановить демо-стенд
 demo-logs: ## Логи демо-стенда
 	$(COMPOSE_DEMO) logs -f
 
+# ── Умный стенд (демо + Ollama LLM) ───────────────────────────────
+smart: ## Поднять умный стенд (Оливия на Ollama) → http://localhost:8080
+	$(COMPOSE_DEMO) -f docker-compose.smart.yml up --build
+
+smart-down: ## Остановить умный стенд
+	$(COMPOSE_DEMO) -f docker-compose.smart.yml down
+
 # ── Разработка ────────────────────────────────────────────────────
 lint: ## Проверка кода (ruff)
 	.venv/bin/ruff check src/

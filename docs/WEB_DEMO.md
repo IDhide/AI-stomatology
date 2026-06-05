@@ -35,6 +35,32 @@ make demo
 docker compose -f docker-compose.demo.yml down     # или: make demo-down
 ```
 
+### 🧠 Умный режим (Ollama LLM) — рекомендуется
+По умолчанию «мозг» — простые правила (`responder.py`): отвечает по ключевым
+словам, не понимает контекст. Чтобы Оливия понимала свободную речь и держала
+нить диалога, подключите настоящую языковую модель (Ollama):
+
+```bash
+# демо + Ollama (поднимет модель и подключит её к киоску)
+docker compose -f docker-compose.demo.yml -f docker-compose.smart.yml up --build
+#   короче:
+make smart
+#   для Firefox с распознаванием речи:
+WITH_STT=1 make smart
+#   модель помощнее (нужен GPU/много RAM):
+OLLAMA_MODEL=qwen2.5:7b-instruct make smart
+```
+
+- Первый запуск **скачивает модель** (~1.9 ГБ для `qwen2.5:3b`) — подождите,
+  пока контейнер `smile-ollama-pull` завершится.
+- Персона берётся из `config/prompts.yaml` (Оливия, цены, акции, правила) —
+  модель отвечает уже «в роли», с учётом контекста и DIKIDI-инструментов.
+- Если Ollama недоступен — киоск автоматически откатывается на правиловый
+  `responder`, голос и визуал продолжают работать.
+- Без Docker: запустите Ollama (`ollama serve`), `ollama pull qwen2.5:3b`,
+  затем `OLLAMA_HOST=http://localhost:11434 OLLAMA_MODEL=qwen2.5:3b
+  python3 -m src.web.server …`.
+
 ### Интерактивный голосовой режим (по умолчанию)
 Откройте страницу, **коснитесь экрана** (браузер требует жест для микрофона и
 звука) и **разрешите доступ к микрофону**. Дальше:

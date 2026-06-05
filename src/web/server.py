@@ -35,6 +35,7 @@ from loguru import logger
 from ..dikidi.client_stub import DikidiClientStub
 from ..dikidi.sim_client import SimDikidiClient
 from ..core.conversation_logger import ConversationLogger
+from ..core.config import load_config
 from . import responder
 
 WEB_DIR = Path(__file__).resolve().parent.parent.parent / "web"
@@ -205,7 +206,13 @@ async def trigger(request: web.Request) -> web.Response:
 
 
 async def api_greeting(request: web.Request) -> web.Response:
-    """Текст приветствия Оливии (браузер озвучит через TTS)."""
+    """Текст приветствия Оливии. Заодно — старт новой сессии (сброс контекста)."""
+    session = request.app["session"]
+    session["cid"] = None
+    session["offtopic"] = 0
+    llm = request.app.get("llm")
+    if llm is not None and hasattr(llm, "reset_conversation"):
+        llm.reset_conversation()
     return web.json_response({"text": responder.greeting()})
 
 
@@ -220,12 +227,30 @@ async def api_message(request: web.Request) -> web.Response:
         return web.json_response({"error": "bad json"}, status=400)
     user_text = (data.get("text") or "").strip()
     session = request.app["session"]
+    llm = request.app.get("llm")
+    conv: ConversationLogger = request.app["conv"]
 
-    # Фильтр релевантности: на фоновую болтовню рядом с экраном — молчим.
+    # ── Умный мозг (Ollama): понимает контекст и свободную речь ──
+    if llm is not None:
+        if not user_text:
+            return web.json_response({"reply": "", "ignored": True})
+        logger.info(f"🎤 пациент: {user_text!r}")
+        try:
+            answer = await llm.get_response(user_text)
+        except Exception:
+            logger.exception("LLM error → fallback на правила")
+            answer = responder.reply(user_text)
+        logger.info(f"💬 Оливия: {answer!r}")
+        if session.get("cid") is None:
+            session["cid"] = conv.start_conversation()
+        conv.log_message(session["cid"], "user", user_text)
+        conv.log_message(session["cid"], "assistant", answer)
+        return web.json_response({"reply": answer})
+
+    # ── Правиловый запасной мозг: фильтр релевантности + шаблоны ──
     if not responder.is_relevant(user_text):
         session["offtopic"] += 1
         logger.info(f"🙊 нерелевантно ({session['offtopic']}): {user_text!r}")
-        # после нескольких нерелевантных подряд — один мягкий повод вернуться к теме
         if session["offtopic"] == 3:
             session["offtopic"] = 0
             nudge = ("Если вам нужна стоматология — подскажите, что вас беспокоит, "
@@ -237,8 +262,6 @@ async def api_message(request: web.Request) -> web.Response:
     logger.info(f"🎤 пациент: {user_text!r}")
     answer = responder.reply(user_text)
     logger.info(f"💬 Оливия: {answer!r}")
-
-    conv: ConversationLogger = request.app["conv"]
     if session.get("cid") is None:
         session["cid"] = conv.start_conversation()
     conv.log_message(session["cid"], "user", user_text)
@@ -293,9 +316,27 @@ def build_app(auto_loop: bool = True) -> web.Application:
                                "jsonl_path": "data/logs/conversations.jsonl"})
     scenario = KioskScenario(bus, dikidi, conv)
 
+    # ── Умный мозг на Ollama (если доступен) ──
+    # Включается, когда задан OLLAMA_HOST. Использует персону из
+    # config/prompts.yaml, держит контекст диалога, ходит в DIKIDI через tools.
+    # Если Ollama недоступен — тихо откатываемся на правиловый responder.
+    llm = None
+    if os.getenv("OLLAMA_HOST"):
+        try:
+            from ..llm.assistant import LLMAssistant
+            cfg = load_config()
+            llm = LLMAssistant(cfg.llm, dikidi)
+            logger.success(f"🧠 Мозг: Ollama ({llm.model})")
+        except Exception as e:
+            logger.warning(f"🧠 Ollama недоступен ({e}). Мозг: правиловый responder.")
+            llm = None
+    else:
+        logger.info("🧠 Мозг: правиловый responder (OLLAMA_HOST не задан)")
+
     app["bus"] = bus
     app["scenario"] = scenario
     app["conv"] = conv
+    app["llm"] = llm
     app["auto_loop"] = auto_loop
     # состояние сессии киоска (изменяемый dict — без мутации app после старта)
     app["session"] = {"cid": None, "offtopic": 0}
