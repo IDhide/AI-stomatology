@@ -232,3 +232,36 @@ body[data-mode="thinking"]  #hud-dot { background: #f2a13c; box-shadow: 0 0 10px
   color: rgba(200, 215, 240, 0.6);
   letter-spacing: 0.02em;
 }
+
+/* ── Строка ввода текстом (фолбэк, если STT недоступен) ──── */
+#text-input-bar {
+  position: fixed;
+  left: 50%;
+  bottom: 3vh;
+  transform: translateX(-50%);
+  z-index: 60;
+  display: flex;
+  gap: 10px;
+  width: min(720px, 88vw);
+}
+#text-input-bar input {
+  flex: 1;
+  padding: 14px 18px;
+  border-radius: 14px;
+  border: 1px solid rgba(157, 75, 255, 0.35);
+  background: rgba(10, 18, 36, 0.85);
+  color: #eaf2ff;
+  font-size: 18px;
+  outline: none;
+}
+#text-input-bar input::placeholder { color: rgba(200, 215, 240, 0.45); }
+#text-input-bar button {
+  width: 54px;
+  border: none;
+  border-radius: 14px;
+  background: var(--violet);
+  color: #fff;
+  font-size: 22px;
+  cursor: pointer;
+}
+#text-input-bar button:hover { background: var(--violet-bright); }

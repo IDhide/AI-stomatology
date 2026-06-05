@@ -238,6 +238,30 @@ async def index(request: web.Request) -> web.Response:
     return web.FileResponse(WEB_DIR / "index.html")
 
 
+async def api_stt(request: web.Request) -> web.Response:
+    """
+    Серверное распознавание речи (для Firefox и др. без Web Speech API).
+    Тело запроса — аудио (audio/webm|ogg|wav) из MediaRecorder браузера.
+    """
+    audio = await request.read()
+    ctype = request.headers.get("Content-Type", "")
+    suffix = ".webm"
+    if "ogg" in ctype:
+        suffix = ".ogg"
+    elif "wav" in ctype:
+        suffix = ".wav"
+    elif "mp4" in ctype or "m4a" in ctype:
+        suffix = ".mp4"
+
+    from . import stt
+    text, err = await asyncio.to_thread(stt.transcribe, audio, suffix)
+    if err:
+        logger.warning(f"STT ошибка: {err}")
+        return web.json_response({"text": "", "error": err}, status=503)
+    logger.info(f"🎤 STT распознал: {text!r}")
+    return web.json_response({"text": text})
+
+
 # ────────────────────────────────────────────────────────────
 def build_app(auto_loop: bool = True) -> web.Application:
     app = web.Application()
@@ -268,6 +292,7 @@ def build_app(auto_loop: bool = True) -> web.Application:
         web.post("/api/trigger", trigger),
         web.get("/api/greeting", api_greeting),
         web.post("/api/message", api_message),
+        web.post("/api/stt", api_stt),
     ])
     # статика
     app.router.add_static("/", path=str(WEB_DIR), name="web")

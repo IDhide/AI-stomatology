@@ -29,6 +29,10 @@ WORKDIR /app
 # Используется в docker-compose.demo.yml для быстрого тестового запуска.
 FROM base AS web
 
+# WITH_STT=1 — доустановить faster-whisper для серверного распознавания речи
+# (нужно для Firefox и др. браузеров без Web Speech API). По умолчанию выкл.
+ARG WITH_STT=0
+
 RUN uv venv --python python3 .venv
 
 RUN uv pip install --python .venv/bin/python \
@@ -37,6 +41,11 @@ RUN uv pip install --python .venv/bin/python \
     "pydantic>=2.5" \
     "python-dotenv>=1.0" \
     "aiohttp>=3.9"
+
+# Опционально — серверный STT (тяжёлая зависимость, модель качается в рантайме)
+RUN if [ "$WITH_STT" = "1" ]; then \
+      uv pip install --python .venv/bin/python "faster-whisper>=1.0.0"; \
+    fi
 
 COPY src/ src/
 COPY config/ config/

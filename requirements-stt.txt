@@ -1,0 +1,7 @@
+# Серверное распознавание речи (для Firefox и др. без Web Speech API).
+# Ставится поверх requirements-minimal.txt:  pip install -r requirements-stt.txt
+#
+# faster-whisper тянет ctranslate2 + onnxruntime + av (PyAV со встроенным
+# ffmpeg), системный ffmpeg не нужен. Модель скачивается с HuggingFace при
+# первом запросе (≈ 0.5 ГБ для 'small'); размер задаётся переменной STT_MODEL.
+faster-whisper>=1.0.0

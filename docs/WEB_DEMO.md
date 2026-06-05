@@ -50,8 +50,36 @@ docker compose -f docker-compose.demo.yml down     # или: make demo-down
   не лечим детей, запись с согласованием времени администратором). Ollama не нужен.
 - `Esc` — остановить сессию.
 
-> Браузер без поддержки распознавания (например, Firefox) покажет подсказку
-> открыть демо в Chrome/Edge. Голос Оливии при этом всё равно работает.
+**Распознавание речи — три пути (выбирается автоматически):**
+
+| Браузер            | Как слышит пациента                                  |
+|--------------------|-----------------------------------------------------|
+| Chrome / Edge      | Web Speech API прямо в браузере (ничего не нужно)   |
+| Firefox и др.      | MediaRecorder → `POST /api/stt` → faster-whisper    |
+| STT недоступен     | строка ввода текстом (Оливия отвечает голосом)      |
+
+### Firefox: распознавание на сервере
+Firefox не умеет Web Speech API, поэтому речь распознаётся на сервере через
+**faster-whisper** (русская модель, без torch). Нужно её включить:
+
+```bash
+# локально
+pip install -r requirements-stt.txt
+DIKIDI_BASE_URL=http://127.0.0.1:8089 python3 -m src.web.server --host 0.0.0.0 --port 8080
+
+# Docker
+WITH_STT=1 docker compose -f docker-compose.demo.yml up --build
+#   размер модели:  STT_MODEL=base WITH_STT=1 docker compose ... up --build
+```
+
+- Модель скачивается с HuggingFace при первом запросе (≈ 0.5 ГБ для `small`,
+  ≈ 150 МБ для `base`) и кэшируется. Нужен доступ в интернет к HuggingFace.
+- Переменные: `STT_MODEL` (tiny|base|small|medium), `STT_DEVICE` (cpu|cuda),
+  `STT_COMPUTE` (int8|float16|…).
+- Если модель не установлена/недоступна — `/api/stt` вернёт 503, и страница
+  автоматически покажет строку ввода текстом (голос Оливии при этом работает).
+
+> В Firefox микрофон работает на `http://localhost` или по HTTPS.
 
 ### Демо-режим (заготовленный диалог, без микрофона)
 Чтобы просто посмотреть визуал без разговора — запустите с флагом `--demo`:
