@@ -11,7 +11,7 @@ tts.py
   • быстро на CPU (~0.5–1.5 с на короткую реплику)
 
 Pипер берёт голосовую модель .onnx + .onnx.json. Русская модель:
-  https://huggingface.co/rhasspy/piper-voices  → ru/ru_RU/dmitri/medium
+  https://huggingface.co/rhasspy/piper-voices  → ru/ru_RU/irina/medium
 
 Переменные окружения:
   PIPER_VOICE       — путь к .onnx (если задан) или имя модели
@@ -33,14 +33,14 @@ from loguru import logger
 _voice = None
 _load_error: str | None = None
 
-# Русский голос Piper: dmitri / medium (~63 МБ + json ~ КБ)
+# Русский голос Piper: irina / medium (женский, ~63 МБ + json ~ КБ)
 _VOICE_BASE = (
     "https://huggingface.co/rhasspy/piper-voices/resolve/main/"
-    "ru/ru_RU/dmitri/medium"
+    "ru/ru_RU/irina/medium"
 )
 _VOICE_FILES = {
-    "ru_RU-dmitri-medium.onnx": f"{_VOICE_BASE}/ru_RU-dmitri-medium.onnx?download=true",
-    "ru_RU-dmitri-medium.onnx.json": f"{_VOICE_BASE}/ru_RU-dmitri-medium.onnx.json?download=true",
+    "ru_RU-irina-medium.onnx": f"{_VOICE_BASE}/ru_RU-irina-medium.onnx?download=true",
+    "ru_RU-irina-medium.onnx.json": f"{_VOICE_BASE}/ru_RU-irina-medium.onnx.json?download=true",
 }
 
 
@@ -54,7 +54,7 @@ def _download_voice() -> Path | None:
         return None
     d = _voice_dir()
     d.mkdir(parents=True, exist_ok=True)
-    onnx = d / "ru_RU-dmitri-medium.onnx"
+    onnx = d / "ru_RU-irina-medium.onnx"
     for name, url in _VOICE_FILES.items():
         dst = d / name
         if dst.exists() and dst.stat().st_size > 1000:
