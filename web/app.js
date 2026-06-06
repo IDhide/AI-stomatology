@@ -142,85 +142,222 @@
     }
   }
 
-  // несколько «медуз» — мягкие светящиеся купола, медленно всплывают
+  // ── Медузы — объёмные, с физикой щупалец ──────────────
+  function hexRGB(hex) {
+    const n = parseInt(hex.slice(1), 16);
+    return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
+  }
+  function rgba(r, g, b, a) { return `rgba(${r},${g},${b},${a})`; }
+  function bright(r, g, b, k) {
+    return [Math.min(255, r + k), Math.min(255, g + k), Math.min(255, b + k)];
+  }
+
+  const PALETTE = ["#9366ff", "#3ecfff", "#ff6eb4", "#ffb347", "#66ffc2", "#c084fc"];
   const jellies = [];
+  let _prevT = 0;
+
+  function makeJelly(x, y, depth) {
+    const size = 30 + depth * 70 + Math.random() * 30;
+    const color = PALETTE[Math.floor(Math.random() * PALETTE.length)];
+    const nTent = 6 + Math.floor(Math.random() * 5);
+    const tentacles = [];
+    for (let i = 0; i < nTent; i++) {
+      const segs = [];
+      const len = 8 + Math.floor(Math.random() * 7);
+      for (let j = 0; j < len; j++) segs.push({ x: x, y: y + j * 4, ox: x, oy: y + j * 4 });
+      tentacles.push({
+        segs,
+        off: (i - (nTent - 1) / 2) / ((nTent - 1) / 2),
+        w: 0.6 + Math.random() * 1.8,
+      });
+    }
+    return {
+      x, y, vx: 0, vy: 0, size, color, depth,
+      phase: Math.random() * Math.PI * 2,
+      pulsePhase: Math.random() * Math.PI * 2,
+      pulse: 0, angle: 0, tentacles,
+    };
+  }
+
   function initJellies() {
     const w = window.innerWidth, h = window.innerHeight;
     jellies.length = 0;
-    const palette = ["#8a5cff", "#4bd6ff", "#ff8fc7", "#ffd27a"];
-    for (let i = 0; i < 5; i++) {
-      jellies.push({
-        x: Math.random() * w,
-        y: Math.random() * h,
-        r: 40 + Math.random() * 70,
-        s: 6 + Math.random() * 14,
-        c: palette[i % palette.length],
-        ph: Math.random() * Math.PI * 2,
-      });
+    for (let i = 0; i < 7; i++) {
+      const depth = 0.25 + Math.random() * 0.75;
+      jellies.push(makeJelly(Math.random() * w, Math.random() * h, depth));
     }
+    jellies.sort((a, b) => a.depth - b.depth);
   }
 
-  function drawBg(t) {
-    if (jelly.style.display === "block") return; // есть реальное видео
-    const w = window.innerWidth, h = window.innerHeight;
+  function updateJelly(j, t, dt, w, h) {
+    const spd = dt / 16;
+    const p = Math.sin(t * 0.0018 + j.pulsePhase);
+    j.pulse = p * (0.18 + 0.06 * Math.sin(t * 0.0005));
+    const thrust = p > 0.3 ? (p - 0.3) * 0.06 * j.depth : 0;
+    j.vy += (-0.015 - thrust) * j.depth * spd;
+    j.vx += Math.sin(t * 0.00025 + j.phase) * 0.008 * spd;
+    j.vx *= 0.993; j.vy *= 0.996;
+    j.x += j.vx * spd; j.y += j.vy * spd;
+    j.angle += (j.vx * 0.015 - j.angle * 0.03) * spd;
+    if (j.y < -j.size * 5) { j.y = h + j.size * 3; j.x = Math.random() * w; }
+    if (j.x < -j.size * 3) j.x = w + j.size * 2;
+    if (j.x > w + j.size * 3) j.x = -j.size * 2;
 
-    // глубокий градиент
-    const g = bctx.createLinearGradient(0, 0, 0, h);
-    g.addColorStop(0, "#070a18");
-    g.addColorStop(0.55, "#0a0f24");
-    g.addColorStop(1, "#05060d");
-    bctx.fillStyle = g;
-    bctx.fillRect(0, 0, w, h);
-
-    // звёзды
-    for (const p of particles) {
-      p.y -= p.s;
-      p.tw += 0.03;
-      if (p.y < -5) { p.y = h + 5; p.x = Math.random() * w; }
-      const a = 0.35 + 0.35 * Math.sin(p.tw);
-      bctx.beginPath();
-      bctx.arc(p.x, p.y, p.r, 0, Math.PI * 2);
-      bctx.fillStyle = `rgba(190,210,255,${a})`;
-      bctx.fill();
-    }
-
-    // медузы — мягкие купола со щупальцами
-    for (const j of jellies) {
-      j.y -= j.s * 0.012;
-      if (j.y < -j.r * 2) { j.y = h + j.r * 2; j.x = Math.random() * w; }
-      const bob = Math.sin(t / 1000 + j.ph) * 8;
-      const cx = j.x, cy = j.y + bob;
-
-      const rg = bctx.createRadialGradient(cx, cy, 2, cx, cy, j.r);
-      rg.addColorStop(0, hexA(j.c, 0.55));
-      rg.addColorStop(0.6, hexA(j.c, 0.18));
-      rg.addColorStop(1, hexA(j.c, 0));
-      bctx.fillStyle = rg;
-      bctx.beginPath();
-      bctx.arc(cx, cy, j.r, Math.PI, 0);           // купол
-      bctx.fill();
-
-      // щупальца
-      bctx.strokeStyle = hexA(j.c, 0.25);
-      bctx.lineWidth = 1.5;
-      for (let k = -3; k <= 3; k++) {
-        bctx.beginPath();
-        const sx = cx + k * (j.r / 5);
-        bctx.moveTo(sx, cy);
-        for (let s = 0; s <= 6; s++) {
-          const yy = cy + s * (j.r / 3);
-          const xx = sx + Math.sin(t / 500 + s + k) * 6;
-          bctx.lineTo(xx, yy);
+    const bw = j.size * (1 - j.pulse * 0.35);
+    const grav = 0.06 * spd, damp = Math.pow(0.97, spd);
+    for (const tn of j.tentacles) {
+      const s = tn.segs;
+      s[0].x = j.x + tn.off * bw * 0.9;
+      s[0].y = j.y + j.size * 0.08;
+      for (let i = 1; i < s.length; i++) {
+        const dx = s[i].x - s[i].ox, dy = s[i].y - s[i].oy;
+        s[i].ox = s[i].x; s[i].oy = s[i].y;
+        s[i].x += dx * damp + Math.sin(t * 0.002 + i * 0.6 + tn.off * 3) * 0.4 * spd;
+        s[i].y += dy * damp + grav;
+      }
+      const segLen = j.size * 0.22;
+      for (let iter = 0; iter < 3; iter++) {
+        for (let i = 1; i < s.length; i++) {
+          const a = s[i - 1], b = s[i];
+          const ddx = b.x - a.x, ddy = b.y - a.y;
+          const dist = Math.sqrt(ddx * ddx + ddy * ddy) || 0.001;
+          const diff = (dist - segLen) / dist * 0.5;
+          if (i === 1) { b.x -= ddx * diff * 2; b.y -= ddy * diff * 2; }
+          else { a.x += ddx * diff; a.y += ddy * diff; b.x -= ddx * diff; b.y -= ddy * diff; }
         }
-        bctx.stroke();
       }
     }
   }
 
-  function hexA(hex, a) {
-    const n = parseInt(hex.slice(1), 16);
-    const r = (n >> 16) & 255, g = (n >> 8) & 255, b = n & 255;
-    return `rgba(${r},${g},${b},${a})`;
+  function drawJelly(ctx, j, t) {
+    const [cr, cg, cb] = hexRGB(j.color);
+    const alpha = 0.25 + j.depth * 0.55;
+    const bw = j.size * (1 - j.pulse * 0.35);
+    const bh = j.size * (0.75 + j.pulse * 0.12);
+    const cx = j.x, cy = j.y;
+    const top = cy - bh;
+
+    ctx.save();
+
+    // щупальца (рисуем ДО купола для глубины)
+    for (const tn of j.tentacles) {
+      const s = tn.segs;
+      if (s.length < 2) continue;
+      ctx.beginPath();
+      ctx.moveTo(s[0].x, s[0].y);
+      for (let i = 1; i < s.length - 1; i++) {
+        const mx = (s[i].x + s[i + 1].x) / 2, my = (s[i].y + s[i + 1].y) / 2;
+        ctx.quadraticCurveTo(s[i].x, s[i].y, mx, my);
+      }
+      ctx.lineTo(s[s.length - 1].x, s[s.length - 1].y);
+      const grad = ctx.createLinearGradient(s[0].x, s[0].y, s[s.length - 1].x, s[s.length - 1].y);
+      grad.addColorStop(0, rgba(cr, cg, cb, alpha * 0.5));
+      grad.addColorStop(1, rgba(cr, cg, cb, 0));
+      ctx.strokeStyle = grad;
+      ctx.lineWidth = tn.w * (1 + j.pulse * 0.4);
+      ctx.lineCap = "round";
+      ctx.stroke();
+    }
+
+    // внешнее свечение
+    ctx.shadowColor = rgba(cr, cg, cb, alpha * 0.5);
+    ctx.shadowBlur = j.size * 0.6;
+
+    // купол — безье-форма
+    ctx.beginPath();
+    ctx.moveTo(cx - bw, cy);
+    ctx.bezierCurveTo(cx - bw, cy - bh * 0.5, cx - bw * 0.55, top, cx, top);
+    ctx.bezierCurveTo(cx + bw * 0.55, top, cx + bw, cy - bh * 0.5, cx + bw, cy);
+    ctx.bezierCurveTo(cx + bw * 0.65, cy + bh * 0.12, cx - bw * 0.65, cy + bh * 0.12, cx - bw, cy);
+    ctx.closePath();
+
+    // заливка — плотный центр, светящиеся края
+    const rg = ctx.createRadialGradient(cx, cy - bh * 0.35, j.size * 0.05,
+                                        cx, cy - bh * 0.25, bw * 1.15);
+    rg.addColorStop(0, rgba(cr, cg, cb, alpha * 0.9));
+    rg.addColorStop(0.35, rgba(cr, cg, cb, alpha * 0.45));
+    rg.addColorStop(0.65, rgba(...bright(cr, cg, cb, 50), alpha * 0.6));
+    rg.addColorStop(0.85, rgba(...bright(cr, cg, cb, 80), alpha * 0.7));
+    rg.addColorStop(1, rgba(cr, cg, cb, 0.02));
+    ctx.fillStyle = rg;
+    ctx.fill();
+    ctx.shadowBlur = 0;
+
+    // внутренняя мембрана (кольцо у края — объём)
+    ctx.beginPath();
+    const iw = bw * 0.92, ih = bh * 0.92, itop = cy - ih;
+    ctx.moveTo(cx - iw, cy - bh * 0.05);
+    ctx.bezierCurveTo(cx - iw, cy - ih * 0.45, cx - iw * 0.52, itop, cx, itop);
+    ctx.bezierCurveTo(cx + iw * 0.52, itop, cx + iw, cy - ih * 0.45, cx + iw, cy - bh * 0.05);
+    const [lr, lg, lb] = bright(cr, cg, cb, 100);
+    ctx.strokeStyle = rgba(lr, lg, lb, alpha * 0.35);
+    ctx.lineWidth = 1.2;
+    ctx.stroke();
+
+    // блик — объёмный свет
+    const sx = cx - bw * 0.25, sy = top + bh * 0.28;
+    const sg = ctx.createRadialGradient(sx, sy, 0, sx, sy, bw * 0.35);
+    sg.addColorStop(0, rgba(255, 255, 255, alpha * 0.35));
+    sg.addColorStop(1, "rgba(255,255,255,0)");
+    ctx.fillStyle = sg;
+    ctx.beginPath();
+    ctx.ellipse(sx, sy, bw * 0.28, bh * 0.18, -0.35, 0, Math.PI * 2);
+    ctx.fill();
+
+    // второй мелкий блик
+    const s2x = cx + bw * 0.15, s2y = top + bh * 0.18;
+    const sg2 = ctx.createRadialGradient(s2x, s2y, 0, s2x, s2y, bw * 0.12);
+    sg2.addColorStop(0, rgba(255, 255, 255, alpha * 0.2));
+    sg2.addColorStop(1, "rgba(255,255,255,0)");
+    ctx.fillStyle = sg2;
+    ctx.beginPath();
+    ctx.ellipse(s2x, s2y, bw * 0.1, bh * 0.07, -0.2, 0, Math.PI * 2);
+    ctx.fill();
+
+    // нижний ободок — складки (пульсируют)
+    ctx.beginPath();
+    const folds = 12;
+    for (let i = 0; i <= folds; i++) {
+      const frac = i / folds;
+      const fx = cx - bw + frac * bw * 2;
+      const fy = cy + Math.sin(frac * Math.PI * 4 + t * 0.003 + j.phase) * bh * 0.06;
+      i === 0 ? ctx.moveTo(fx, fy) : ctx.lineTo(fx, fy);
+    }
+    ctx.strokeStyle = rgba(...bright(cr, cg, cb, 60), alpha * 0.4);
+    ctx.lineWidth = 1;
+    ctx.stroke();
+
+    ctx.restore();
+  }
+
+  function drawBg(t) {
+    if (jelly.style.display === "block") return;
+    const w = window.innerWidth, h = window.innerHeight;
+    const dt = _prevT ? t - _prevT : 16;
+    _prevT = t;
+
+    const g = bctx.createLinearGradient(0, 0, 0, h);
+    g.addColorStop(0, "#060915");
+    g.addColorStop(0.45, "#0a0f24");
+    g.addColorStop(1, "#04050b");
+    bctx.fillStyle = g;
+    bctx.fillRect(0, 0, w, h);
+
+    for (const p of particles) {
+      p.y -= p.s;
+      p.tw += 0.03;
+      if (p.y < -5) { p.y = h + 5; p.x = Math.random() * w; }
+      const a = 0.3 + 0.3 * Math.sin(p.tw);
+      bctx.beginPath();
+      bctx.arc(p.x, p.y, p.r, 0, Math.PI * 2);
+      bctx.fillStyle = rgba(180, 210, 255, a);
+      bctx.fill();
+    }
+
+    for (const j of jellies) {
+      updateJelly(j, t, dt, w, h);
+      drawJelly(bctx, j, t);
+    }
   }
 
   // ============================================================
