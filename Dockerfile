@@ -41,8 +41,16 @@ RUN if [ "$WITH_STT" = "1" ]; then \
       uv pip install --python .venv/bin/python "faster-whisper>=1.0.0"; \
     fi
 
-# Опционально — серверный TTS (Piper, голос ~63 МБ скачивается при первом запросе)
-RUN if [ "$WITH_TTS" = "1" ]; then \
+# Опционально — серверный TTS. По умолчанию Silero (живой женский голос,
+# нужен torch CPU ~800 МБ). Для лёгкого запасного движка Piper укажите
+# --build-arg TTS_ENGINE=piper.
+ARG TTS_ENGINE=silero
+RUN if [ "$WITH_TTS" = "1" ] && [ "$TTS_ENGINE" = "silero" ]; then \
+      uv pip install --python .venv/bin/python \
+        --extra-index-url https://download.pytorch.org/whl/cpu \
+        "torch>=2.1" "numpy>=1.24"; \
+    fi
+RUN if [ "$WITH_TTS" = "1" ] && [ "$TTS_ENGINE" = "piper" ]; then \
       uv pip install --python .venv/bin/python "piper-tts>=1.2.0"; \
     fi
 

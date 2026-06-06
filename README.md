@@ -28,7 +28,7 @@
 │  src/web/server.py  (aiohttp)                        │
 │   ├─ /api/message  → «мозг»: Ollama LLM | правила    │
 │   ├─ /api/stt      → faster-whisper (для Firefox)    │
-│   ├─ /api/tts      → Piper (локальный синтез)        │
+│   ├─ /api/tts      → Silero (локальный синтез)       │
 │   └─ DikidiClient  → запись/слоты/услуги             │
 │            │                                         │
 │            ▼  HTTP                                   │
@@ -39,7 +39,7 @@
 | Слой          | Реализация                                                              |
 |---------------|-------------------------------------------------------------------------|
 | Визуал        | `web/` — HTML/CSS/JS: круг с аудио-волной, субтитры, процедурные медузы  |
-| Голос (TTS)   | **Piper** на сервере (женский голос `ru_RU/irina/medium`); фолбэк — `speechSynthesis` браузера |
+| Голос (TTS)   | **Silero** на сервере — живой женский голос (`baya`/`xenia`); фолбэк — Piper (`ru_RU/irina`), затем `speechSynthesis` браузера |
 | Слух (STT)    | Chrome/Edge — Web Speech API; Firefox — сервер (`faster-whisper`); иначе — ввод текстом |
 | Мозг          | **Ollama LLM** с персоной из `config/prompts.yaml`; фолбэк — правила (`src/web/responder.py`) |
 | Запись        | `src/dikidi/client.py` → тестовый `src/dikidi/fake_server.py` (или боевой DIKIDI) |
@@ -72,8 +72,8 @@ make smart
 | | `make demo` | `make smart` |
 |---|---|---|
 | **Мозг** | правила по ключевым словам (`responder.py`), контекст не держит | Ollama LLM — понимает свободную речь и нить диалога |
-| **Голос** | `speechSynthesis` браузера | серверный **Piper**, женский голос Ирина (одинаковый во всех браузерах) |
-| **Скачивает** | ничего | модель Ollama (~1 ГБ) + голос Piper (~63 МБ) при первом запуске |
+| **Голос** | `speechSynthesis` браузера | серверный **Silero** — живой женский голос (одинаковый во всех браузерах) |
+| **Скачивает** | ничего | модель Ollama (~1 ГБ) + голос Silero (~50 МБ) при первом запуске |
 | **Когда** | быстро глянуть визуал/логику | боевой режим, как на киоске |
 
 ### Полезные флаги
@@ -99,20 +99,28 @@ make demo-down      # или: make smart-down
 
 ## Голос Оливии (TTS)
 
-В `make smart` голос синтезирует **Piper** прямо на сервере:
+В `make smart` голос синтезирует **Silero** прямо на сервере:
 
-- русский **женский** голос `ru_RU/irina/medium` (~63 МБ);
-- одинаково звучит в Chrome и Firefox;
-- работает офлайн, аудио не уходит в облако.
+- русский **живой женский** голос (`baya` — тёплый тембр, либо `xenia`/`kseniya`);
+- естественная интонация и автоматические ударения (`put_accent`, `put_yo`);
+- 48 кГц, одинаково звучит в Chrome и Firefox;
+- работает офлайн, аудио не уходит в облако (важно для медицины).
 
-При первом ответе модель голоса скачивается с HuggingFace в Docker-volume
-`piper_voices` и кэшируется. В логах появится `TTS: загружаю Piper
-ru_RU-irina-medium.onnx…` → `TTS готов`. Браузер сам спрашивает `/api/tts/status`
-и переключается на серверный голос; если Piper недоступен — откатывается на голос
-браузера.
+При первом ответе модель `v4_ru` (~50 МБ) скачивается в Docker-volume
+`silero_voices` и кэшируется. В логах появится `TTS: загружаю Silero v4_ru…`
+→ `TTS готов`. Браузер сам спрашивает `/api/tts/status` и переключается на
+серверный голос.
 
-Сменить голос/скорость — переменными `PIPER_VOICE`, `PIPER_LENGTH` (см.
-`src/web/tts.py`).
+Настройка — переменными окружения:
+
+```bash
+SILERO_SPEAKER=baya make smart      # baya | xenia | kseniya (женские)
+SILERO_SAMPLE_RATE=48000            # 8000 | 24000 | 48000
+TTS_ENGINE=piper make smart         # лёгкий запасной движок без torch
+```
+
+Если `torch`/Silero недоступен — откат на Piper (`ru_RU/irina`), затем на
+голос браузера.
 
 ---
 
@@ -180,7 +188,7 @@ src/
     server.py        # aiohttp: статика, SSE, /api/*
     responder.py     # правиловый «мозг» + фильтр посторонней речи
     stt.py           # серверное распознавание (faster-whisper)
-    tts.py           # серверный синтез (Piper, женский голос irina)
+    tts.py           # серверный синтез (Silero — живой женский; Piper — запасной)
   llm/
     assistant.py     # LLM-мозг на Ollama (персона, интенты, инструменты)
     tools.py         # инструменты для LLM (слоты/запись через DIKIDI)
@@ -190,7 +198,7 @@ src/
   dental/            # FAQ, триаж, база знаний, юмор
 web/                 # фронтенд киоска (index.html, app.js, voice.js, camera.js)
 docker-compose.demo.yml    # базовый стенд (web + dikidi-sim)
-docker-compose.smart.yml   # надстройка: + Ollama + Piper TTS
+docker-compose.smart.yml   # надстройка: + Ollama + Silero TTS
 Makefile                   # make demo / smart / test / lint
 ```
 

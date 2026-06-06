@@ -83,17 +83,25 @@ services:
         # включаем серверный TTS по умолчанию в smart-стенде
         WITH_TTS: "${WITH_TTS:-1}"
         WITH_STT: "${WITH_STT:-0}"
+        # движок голоса: silero (живой женский) | piper (лёгкий)
+        TTS_ENGINE: "${TTS_ENGINE:-silero}"
     environment:
       DIKIDI_BASE_URL: "http://dikidi-sim:8089"
       OLLAMA_HOST: "http://ollama:11434"
       OLLAMA_MODEL: "${OLLAMA_MODEL:-qwen2.5:1.5b}"
       STT_MODEL: "${STT_MODEL:-small}"
+      # ── Голос Оливии (Silero — живой женский) ──
+      TTS_ENGINE: "${TTS_ENGINE:-silero}"
+      SILERO_SPEAKER: "${SILERO_SPEAKER:-baya}"   # baya | xenia | kseniya
+      SILERO_SAMPLE_RATE: "${SILERO_SAMPLE_RATE:-48000}"
+      SILERO_MODEL_DIR: "/app/models/silero"
       PIPER_VOICE_DIR: "/app/models/piper"
       PYTHONUNBUFFERED: "1"
     volumes:
       - ./data:/app/data
       - ./assets:/app/assets
-      - piper_voices:/app/models/piper   # кэш голосовых моделей Piper
+      - silero_voices:/app/models/silero   # кэш модели Silero
+      - piper_voices:/app/models/piper     # кэш голосовых моделей Piper
     depends_on:
       dikidi-sim:
         condition: service_healthy
@@ -102,6 +110,8 @@ services:
 
 volumes:
   ollama_data:
+    driver: local
+  silero_voices:
     driver: local
   piper_voices:
     driver: local
