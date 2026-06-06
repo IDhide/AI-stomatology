@@ -212,7 +212,20 @@ async def api_greeting(request: web.Request) -> web.Response:
     llm = request.app.get("llm")
     if llm is not None and hasattr(llm, "reset_conversation"):
         llm.reset_conversation()
-    return web.json_response({"text": responder.greeting()})
+
+    source = request.query.get("source", "")
+    if source == "camera":
+        text = ("Здравствуйте! Меня зовут Оливия, администратор клиники "
+                "«Стоматология номер один». Подскажите, как вас зовут?")
+        if llm is not None:
+            llm.history.append({
+                "user": "[пациент подошёл к стойке — камера обнаружила лицо]",
+                "assistant": text,
+            })
+    else:
+        text = responder.greeting()
+
+    return web.json_response({"text": text})
 
 
 async def api_message(request: web.Request) -> web.Response:
@@ -401,10 +414,33 @@ def build_app(auto_loop: bool = True) -> web.Application:
         if app["auto_loop"]:
             app["loop_task"] = asyncio.create_task(scenario.auto_loop())
 
+        # ── Серверная камера (RTSP / USB) ──
+        # Если задан CAMERA_SOURCE — запускаем фоновый детектор.
+        # При обнаружении человека → POST /api/trigger (запуск голосовой сессии).
+        if os.getenv("CAMERA_SOURCE", "").strip():
+            from ..camera import detector
+            loop = asyncio.get_event_loop()
+
+            def _on_person():
+                asyncio.run_coroutine_threadsafe(bus.publish({
+                    "type": "camera", "event": "person_detected"
+                }), loop)
+
+            def _on_left():
+                asyncio.run_coroutine_threadsafe(bus.publish({
+                    "type": "camera", "event": "person_left"
+                }), loop)
+
+            if detector.start(_on_person, _on_left):
+                logger.success("Камера: серверная детекция запущена")
+
     async def on_cleanup(app: web.Application) -> None:
         t = app.get("loop_task")
         if t:
             t.cancel()
+        if os.getenv("CAMERA_SOURCE", "").strip():
+            from ..camera import detector
+            detector.stop()
         await dikidi.close()
 
     app.on_startup.append(on_start)

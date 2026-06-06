@@ -1,0 +1,47 @@
+# ════════════════════════════════════════════════════════════════════
+#  Smile.AI — НАДСТРОЙКА «камера» (детекция пациентов)
+#
+#  Добавляет к стенду:
+#    • go2rtc — RTSP-мост для Wi-Fi камер (Xiaomi C200 и др.)
+#    • OpenCV в веб-киоске — детекция лиц (Haar cascade, без GPU)
+#
+#  При обнаружении лица Оливия автоматически приветствует пациента
+#  и спрашивает имя. Работает с любой RTSP/USB-камерой.
+#
+#  Перед запуском:
+#    1. Отредактируйте config/go2rtc.yaml — укажите данные камеры
+#    2. Запустите:
+#       docker compose -f docker-compose.demo.yml \
+#                      -f docker-compose.camera.yml up --build
+#       # или с умным мозгом:
+#       docker compose -f docker-compose.demo.yml \
+#                      -f docker-compose.smart.yml \
+#                      -f docker-compose.camera.yml up --build
+#       # короче:  make camera   или   make smart-camera
+# ════════════════════════════════════════════════════════════════════
+
+services:
+
+  # ── go2rtc: RTSP-мост для Wi-Fi камер ───────────────────────────
+  go2rtc:
+    image: alexxit/go2rtc:latest
+    container_name: smile-go2rtc
+    volumes:
+      - ./config/go2rtc.yaml:/config/go2rtc.yaml:ro
+    ports:
+      - "1984:1984"     # Web UI (просмотр потока в браузере)
+      - "8554:8554"     # RTSP-выход
+    restart: unless-stopped
+
+  # ── Веб-киоск: добавляем OpenCV + камеру ────────────────────────
+  web:
+    build:
+      args:
+        WITH_CAMERA: "1"
+    environment:
+      CAMERA_SOURCE: "${CAMERA_SOURCE:-rtsp://go2rtc:8554/xiaomi_c200}"
+      CAMERA_FPS: "${CAMERA_FPS:-5}"
+      CAMERA_COOLDOWN: "${CAMERA_COOLDOWN:-30}"
+      CAMERA_LOST_AFTER: "${CAMERA_LOST_AFTER:-5}"
+    depends_on:
+      - go2rtc

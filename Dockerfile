@@ -46,6 +46,12 @@ RUN if [ "$WITH_TTS" = "1" ]; then \
       uv pip install --python .venv/bin/python "piper-tts>=1.2.0"; \
     fi
 
+# Опционально — детекция лиц камерой (OpenCV, ~50 МБ)
+ARG WITH_CAMERA=0
+RUN if [ "$WITH_CAMERA" = "1" ]; then \
+      uv pip install --python .venv/bin/python "opencv-python-headless>=4.8.0"; \
+    fi
+
 COPY src/ src/
 COPY config/ config/
 COPY web/ web/

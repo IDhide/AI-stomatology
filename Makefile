@@ -3,9 +3,10 @@
 #  Использование: make <target>
 # ════════════════════════════════════════════════════════════════════
 
-.PHONY: help demo demo-down demo-logs smart smart-down test lint clean
+.PHONY: help demo demo-down demo-logs smart smart-down camera smart-camera camera-down test lint clean
 
 COMPOSE_DEMO = docker compose -f docker-compose.demo.yml
+COMPOSE_CAMERA = -f docker-compose.camera.yml
 
 help: ## Показать список команд
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
@@ -26,6 +27,15 @@ smart: ## Умный стенд: + Ollama LLM (понимает контекст
 
 smart-down: ## Остановить умный стенд
 	$(COMPOSE_DEMO) -f docker-compose.smart.yml down
+
+camera: ## Базовый стенд + камера (Xiaomi C200 → go2rtc → детекция лиц)
+	$(COMPOSE_DEMO) $(COMPOSE_CAMERA) up --build
+
+smart-camera: ## Умный стенд + камера (Ollama + go2rtc + детекция лиц)
+	$(COMPOSE_DEMO) -f docker-compose.smart.yml $(COMPOSE_CAMERA) up --build
+
+camera-down: ## Остановить стенд с камерой
+	$(COMPOSE_DEMO) $(COMPOSE_CAMERA) down
 
 # ── Разработка ────────────────────────────────────────────────────
 test: ## Тесты (dental + config)

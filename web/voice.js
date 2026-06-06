@@ -279,20 +279,21 @@
   }
 
   // ── запуск (по жесту пользователя) ──────────────────────
-  async function start() {
+  async function start(source) {
     if (state.active) return;
     state.active = true;
 
-    // Спрашиваем сервер, есть ли локальный TTS (Piper). Если есть — берём его,
-    // иначе фолбэк на speechSynthesis браузера.
     try {
       const r = await fetch("/api/tts/status");
       state.serverTTS = !!(await r.json()).available;
     } catch (_) { state.serverTTS = false; }
     console.log("[voice] server TTS:", state.serverTTS ? "Piper" : "browser");
 
+    const greetUrl = source === "camera"
+      ? "/api/greeting?source=camera"
+      : "/api/greeting";
     let greet = "Здравствуйте, меня зовут Оливия. Чем могу помочь?";
-    try { greet = (await (await fetch("/api/greeting")).json()).text || greet; } catch (_) {}
+    try { greet = (await (await fetch(greetUrl)).json()).text || greet; } catch (_) {}
     await speak(greet);
 
     if (SR) {
@@ -314,6 +315,24 @@
     try { state.audioEl && state.audioEl.pause(); } catch (_) {}
     try { state.rec && state.rec.stop(); } catch (_) {}
     setMode("idle");
+  }
+
+  // ── серверная камера (SSE) ─────────────────────────────
+  function connectCamera() {
+    const es = new EventSource("/api/events");
+    es.onmessage = (e) => {
+      try {
+        const d = JSON.parse(e.data);
+        if (d.type !== "camera") return;
+        if (d.event === "person_detected" && !state.active) {
+          const ov = document.getElementById("start-overlay");
+          if (ov) { ov.classList.add("hide"); setTimeout(() => ov.remove(), 600); }
+          start("camera");
+        } else if (d.event === "person_left" && state.active) {
+          stop();
+        }
+      } catch (_) {}
+    };
   }
 
   // ── оверлей старта ──────────────────────────────────────
@@ -349,6 +368,7 @@
 
   window.SmileVoice = { start, stop, state };
 
-  document.addEventListener("DOMContentLoaded", buildOverlay);
-  if (document.readyState !== "loading") buildOverlay();
+  function init() { buildOverlay(); connectCamera(); }
+  document.addEventListener("DOMContentLoaded", init);
+  if (document.readyState !== "loading") init();
 })();
