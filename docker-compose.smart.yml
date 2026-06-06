@@ -82,7 +82,7 @@ services:
       args:
         # включаем серверный TTS по умолчанию в smart-стенде
         WITH_TTS: "${WITH_TTS:-1}"
-        WITH_STT: "${WITH_STT:-0}"
+        WITH_STT: "${WITH_STT:-1}"
         # движок голоса: silero (живой женский) | piper (лёгкий)
         TTS_ENGINE: "${TTS_ENGINE:-silero}"
     environment:

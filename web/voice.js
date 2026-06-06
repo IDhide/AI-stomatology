@@ -300,8 +300,21 @@
       state.inputMode = "sr";
       loopVoice(listenSR);
     } else if (hasRecorder) {
-      state.inputMode = "server";
-      loopVoice(listenServer);
+      // Firefox: проверяем серверный STT перед записью
+      let sttOk = false;
+      try {
+        const st = await fetch("/api/stt/status");
+        sttOk = !!(await st.json()).available;
+      } catch (_) {}
+      if (sttOk) {
+        state.inputMode = "server";
+        loopVoice(listenServer);
+      } else {
+        console.warn("[voice] серверный STT недоступен → текстовый ввод");
+        enableTextMode("server STT not available");
+        setMode("listening");
+        hudText.textContent = "ВВЕДИТЕ СООБЩЕНИЕ";
+      }
     } else {
       enableTextMode("no SR, no MediaRecorder");
       setMode("listening");

@@ -332,6 +332,13 @@ async def api_tts_status(request: web.Request) -> web.Response:
     return web.json_response({"available": bool(available)})
 
 
+async def api_stt_status(request: web.Request) -> web.Response:
+    """Проверка: доступен ли серверный STT (для Firefox)."""
+    from . import stt
+    available = await asyncio.to_thread(stt.is_available)
+    return web.json_response({"available": bool(available)})
+
+
 async def api_stt(request: web.Request) -> web.Response:
     """
     Серверное распознавание речи (для Firefox и др. без Web Speech API).
@@ -405,6 +412,7 @@ def build_app(auto_loop: bool = True) -> web.Application:
         web.get("/api/greeting", api_greeting),
         web.post("/api/message", api_message),
         web.post("/api/stt", api_stt),
+        web.get("/api/stt/status", api_stt_status),
         web.get("/api/tts", api_tts),
         web.get("/api/tts/status", api_tts_status),
     ])
