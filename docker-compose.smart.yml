@@ -46,10 +46,32 @@ services:
     container_name: smile-ollama-pull
     environment:
       OLLAMA_HOST: "http://ollama:11434"
+    # реестр Ollama иногда отдаёт "file does not exist" на манифесте —
+    # transient сбой; ретраим до 5 раз с экспоненциальным backoff.
     entrypoint:
       - sh
       - -c
-      - 'until ollama list >/dev/null 2>&1; do echo "ждём ollama…"; sleep 2; done; ollama pull ${OLLAMA_MODEL:-qwen2.5:1.5b}'
+      - |
+        until ollama list >/dev/null 2>&1; do echo "ждём ollama…"; sleep 2; done
+        MODEL="${OLLAMA_MODEL:-qwen2.5:1.5b}"
+        # если модель уже есть в кэше (volume) — ничего не качаем
+        if ollama list 2>/dev/null | awk 'NR>1 {print $1}' | grep -qx "$MODEL"; then
+          echo "Модель $MODEL уже в кэше, пропускаем pull"
+          exit 0
+        fi
+        delay=2
+        for attempt in 1 2 3 4 5; do
+          echo "pull $MODEL — попытка $attempt…"
+          if ollama pull "$MODEL"; then
+            echo "Модель $MODEL загружена"
+            exit 0
+          fi
+          echo "Сбой реестра, повтор через ${delay}s…"
+          sleep $delay
+          delay=$((delay * 2))
+        done
+        echo "Не удалось скачать $MODEL за 5 попыток"
+        exit 1
     depends_on:
       ollama:
         condition: service_healthy
