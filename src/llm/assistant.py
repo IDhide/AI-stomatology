@@ -146,6 +146,9 @@ class LLMAssistant:
                 "Прошу прощения, мне нужна минутка. Я уточню и вернусь к вам.",
             )
 
+        if text.strip().upper().startswith("ИГНОР"):
+            return "ИГНОР"
+
         self._push(user_text, text)
         return self._with_optional_joke(text, intent, tri)
 

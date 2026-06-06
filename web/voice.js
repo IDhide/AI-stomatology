@@ -158,7 +158,7 @@
   // ════════════════════════════════════════════════════════
   //  Путь 2: MediaRecorder → сервер (Firefox)
   // ════════════════════════════════════════════════════════
-  async function recordUntilSilence(maxMs = 12000, silenceMs = 1300) {
+  async function recordUntilSilence(maxMs = 8000, silenceMs = 1200) {
     const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
     let mime = "audio/webm";
     if (!MediaRecorder.isTypeSupported(mime)) {
@@ -187,7 +187,7 @@
         for (let i = 0; i < buf.length; i++) { const v = (buf[i] - 128) / 128; sum += v * v; }
         const rms = Math.sqrt(sum / buf.length);
         const now = Date.now();
-        if (rms > 0.022) { lastVoice = now; heardVoice = true; }
+        if (rms > 0.04) { lastVoice = now; heardVoice = true; }
         const silentLongEnough = heardVoice && (now - lastVoice > silenceMs);
         if (silentLongEnough || now - t0 > maxMs) {
           clearInterval(timer);

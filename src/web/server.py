@@ -252,6 +252,9 @@ async def api_message(request: web.Request) -> web.Response:
         except Exception:
             logger.exception("LLM error → fallback на правила")
             answer = responder.reply(user_text)
+        if answer.strip().upper().startswith("ИГНОР"):
+            logger.info(f"🙊 фоновый шум, игнорирую: {user_text!r}")
+            return web.json_response({"reply": "", "ignored": True})
         logger.info(f"💬 Оливия: {answer!r}")
         if session.get("cid") is None:
             session["cid"] = conv.start_conversation()
