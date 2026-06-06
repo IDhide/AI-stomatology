@@ -32,8 +32,7 @@ from pathlib import Path
 from aiohttp import web
 from loguru import logger
 
-from ..dikidi.client_stub import DikidiClientStub
-from ..dikidi.sim_client import SimDikidiClient
+from ..dikidi.client import DikidiClient
 from ..core.conversation_logger import ConversationLogger
 from ..core.config import load_config
 from . import responder
@@ -260,7 +259,28 @@ async def api_message(request: web.Request) -> web.Response:
 
     session["offtopic"] = 0
     logger.info(f"🎤 пациент: {user_text!r}")
-    answer = responder.reply(user_text)
+
+    # Запрос времени/записи → реально спрашиваем окна в тестовом DIKIDI
+    if responder.wants_slots(user_text):
+        dikidi = request.app["dikidi"]
+        spec = responder.specialty_for(user_text)
+        try:
+            slots = await dikidi.get_available_slots(spec, limit=3)
+        except Exception:
+            logger.exception("DIKIDI недоступен")
+            slots = []
+        if slots:
+            human = "; ".join(s["human"] for s in slots[:2])
+            answer = (f"Подойдёт, например, {human}. Назовите ваше имя и "
+                      "продиктуйте номер — администратор перезвонит и согласует "
+                      "точное время?")
+        else:
+            answer = ("Сейчас подберём удобное время. Назовите ваше имя и "
+                      "продиктуйте номер — администратор перезвонит и согласует "
+                      "запись?")
+    else:
+        answer = responder.reply(user_text)
+
     logger.info(f"💬 Оливия: {answer!r}")
     if session.get("cid") is None:
         session["cid"] = conv.start_conversation()
@@ -302,15 +322,12 @@ def build_app(auto_loop: bool = True) -> web.Application:
     app = web.Application()
     bus = EventBus()
 
-    # Источник данных DIKIDI: HTTP-симулятор (отдельный контейнер) либо
-    # in-process заглушка. Включается переменной окружения DIKIDI_BASE_URL.
-    dikidi_url = os.getenv("DIKIDI_BASE_URL", "").strip()
-    if dikidi_url:
-        dikidi = SimDikidiClient(dikidi_url)
-        logger.info(f"DIKIDI backend: HTTP → {dikidi_url}")
-    else:
-        dikidi = DikidiClientStub(seed=7)
-        logger.info("DIKIDI backend: in-process stub")
+    # Единый DIKIDI-клиент. По умолчанию — тестовый сервер fake_server
+    # (в docker это контейнер dikidi-sim). Для реального DIKIDI поменяйте
+    # DIKIDI_BASE_URL и DIKIDI_TOKEN — код не меняется.
+    dikidi_url = os.getenv("DIKIDI_BASE_URL", "http://127.0.0.1:8089").strip()
+    dikidi_token = os.getenv("DIKIDI_TOKEN", "demo-token")
+    dikidi = DikidiClient(dikidi_url, token=dikidi_token)
 
     conv = ConversationLogger({"enabled": True,
                                "jsonl_path": "data/logs/conversations.jsonl"})
@@ -336,6 +353,7 @@ def build_app(auto_loop: bool = True) -> web.Application:
     app["bus"] = bus
     app["scenario"] = scenario
     app["conv"] = conv
+    app["dikidi"] = dikidi
     app["llm"] = llm
     app["auto_loop"] = auto_loop
     # состояние сессии киоска (изменяемый dict — без мутации app после старта)
@@ -362,6 +380,7 @@ def build_app(auto_loop: bool = True) -> web.Application:
         t = app.get("loop_task")
         if t:
             t.cancel()
+        await dikidi.close()
 
     app.on_startup.append(on_start)
     app.on_cleanup.append(on_cleanup)

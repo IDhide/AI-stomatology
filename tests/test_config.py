@@ -24,9 +24,14 @@ def test_load_config_types():
     assert isinstance(cfg.dental.enable_humor, bool)
 
 
-def test_load_config_custom_path(tmp_path):
-    """Конфиг грузится из кастомного пути."""
+def test_load_config_custom_path(tmp_path, monkeypatch):
+    """Конфиг грузится из кастомного пути (без влияния .env/переменных)."""
     import yaml
+    # env-переменные и .env перекрывают конфиг — для чистоты теста убираем их
+    monkeypatch.setattr("src.core.config.load_dotenv", lambda *a, **k: None)
+    for var in ("OLLAMA_MODEL", "OLLAMA_HOST", "DIKIDI_BASE_URL",
+                "DIKIDI_TOKEN", "DIKIDI_API_KEY", "DIKIDI_COMPANY_ID"):
+        monkeypatch.delenv(var, raising=False)
     data = {
         "app": {"name": "Test", "version": "0.0.1"},
         "llm": {"provider": "ollama", "model": "test-model"},
