@@ -37,7 +37,7 @@ def _get_model():
     except Exception as e:  # библиотека не установлена
         _load_error = f"faster-whisper не установлен ({e})"
         logger.warning(f"STT недоступен: {_load_error}. "
-                       "Установите: pip install -r requirements-stt.txt")
+                       "Установите: pip install -r requirements-voice.txt")
         return None
     try:
         size = os.getenv("STT_MODEL", "small")

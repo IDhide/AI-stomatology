@@ -1,17 +1,18 @@
 # ════════════════════════════════════════════════════════════════════
-#  Smile.AI — НАДСТРОЙКА «умный мозг» (Ollama LLM)
+#  Smile.AI — НАДСТРОЙКА «умный мозг» (Ollama LLM) + локальный TTS (Piper)
 #
-#  Добавляет к демо-стенду настоящий языковой модель-мозг: Оливия начинает
-#  понимать свободную речь и держать контекст диалога (а не отвечать по
-#  ключевым словам). Применяется ПОВЕРХ docker-compose.demo.yml.
+#  Добавляет к демо-стенду:
+#    • языковую модель Ollama (по умолчанию qwen2.5:1.5b — быстрая на CPU,
+#      хороший русский, ответ ~1.5–3 с на короткую реплику);
+#    • серверный TTS (Piper) — голос Оливии полностью локальный, одинаковый
+#      во всех браузерах, не уходит в Google.
 #
 #  Запуск:
 #    docker compose -f docker-compose.demo.yml -f docker-compose.smart.yml up --build
 #    #  короче:  make smart
-#    #  с STT для Firefox:  WITH_STT=1 make smart
-#    #  другая модель:      OLLAMA_MODEL=qwen2.5:7b-instruct make smart
-#
-#  Первый запуск качает модель (~1.9 ГБ для qwen2.5:3b) — подождите.
+#    #  с STT (Firefox):    WITH_STT=1 make smart
+#    #  модель помощнее:    OLLAMA_MODEL=qwen2.5:3b make smart
+#    #  совсем шустрая:     OLLAMA_MODEL=llama3.2:1b make smart
 # ════════════════════════════════════════════════════════════════════
 
 services:
@@ -20,6 +21,13 @@ services:
   ollama:
     image: ollama/ollama:latest
     container_name: smile-ollama
+    environment:
+      # держим модель в памяти, чтобы не выгружалась между репликами
+      OLLAMA_KEEP_ALIVE: "30m"
+      # одна параллельная сессия (киоск всё равно один) — больше памяти на контекст
+      OLLAMA_NUM_PARALLEL: "1"
+      # ускорение на CPU
+      OLLAMA_FLASH_ATTENTION: "1"
     volumes:
       - ollama_data:/root/.ollama
     ports:
@@ -41,20 +49,30 @@ services:
     entrypoint:
       - sh
       - -c
-      - 'until ollama list >/dev/null 2>&1; do echo "ждём ollama…"; sleep 2; done; ollama pull ${OLLAMA_MODEL:-qwen2.5:3b}'
+      - 'until ollama list >/dev/null 2>&1; do echo "ждём ollama…"; sleep 2; done; ollama pull ${OLLAMA_MODEL:-qwen2.5:1.5b}'
     depends_on:
       ollama:
         condition: service_healthy
     restart: "no"
 
-  # ── Веб-киоск: подключаем мозг ───────────────────────────────────
+  # ── Веб-киоск: подключаем мозг + серверный TTS ──────────────────
   web:
+    build:
+      args:
+        # включаем серверный TTS по умолчанию в smart-стенде
+        WITH_TTS: "${WITH_TTS:-1}"
+        WITH_STT: "${WITH_STT:-0}"
     environment:
       DIKIDI_BASE_URL: "http://dikidi-sim:8089"
       OLLAMA_HOST: "http://ollama:11434"
-      OLLAMA_MODEL: "${OLLAMA_MODEL:-qwen2.5:3b}"
+      OLLAMA_MODEL: "${OLLAMA_MODEL:-qwen2.5:1.5b}"
       STT_MODEL: "${STT_MODEL:-small}"
+      PIPER_VOICE_DIR: "/app/models/piper"
       PYTHONUNBUFFERED: "1"
+    volumes:
+      - ./data:/app/data
+      - ./assets:/app/assets
+      - piper_voices:/app/models/piper   # кэш голосовых моделей Piper
     depends_on:
       dikidi-sim:
         condition: service_healthy
@@ -63,4 +81,6 @@ services:
 
 volumes:
   ollama_data:
+    driver: local
+  piper_voices:
     driver: local

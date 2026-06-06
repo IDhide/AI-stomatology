@@ -212,8 +212,9 @@ class LLMAssistant:
     # ------------------------------------------------------------------
     def _build_messages(self, user_text: str) -> list[dict]:
         msgs: list[dict] = [{"role": "system", "content": self.system_prompt}]
-        # последние 6 пар — больше не надо для голосового сценария
-        for pair in self.history[-6:]:
+        # последние 4 пары — для голосового сценария большего не надо
+        # (меньше контекста → быстрее ответ на CPU)
+        for pair in self.history[-4:]:
             msgs.append({"role": "user", "content": pair["user"]})
             msgs.append({"role": "assistant", "content": pair["assistant"]})
         msgs.append({"role": "user", "content": user_text})

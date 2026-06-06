@@ -27,7 +27,9 @@
     speaking: false,
     ruVoice: null,
     rec: null,
-    inputMode: "none", // sr | server | text
+    inputMode: "none",     // sr | server | text
+    serverTTS: null,       // true | false (определяется при старте)
+    audioEl: null,         // <audio> для воспроизведения серверного TTS
   };
 
   // ── русский голос для TTS ───────────────────────────────
@@ -39,23 +41,53 @@
       voices.find((v) => /russian|русск/i.test(v.name)) || null;
   }
 
-  // ── TTS: произнести и дождаться конца ───────────────────
+  // ── TTS: серверный Piper, фолбэк — speechSynthesis браузера ──
   function speak(text) {
     return new Promise((resolve) => {
       if (!text) return resolve();
       setMode("speaking");
       setSub(text, "bot");
       state.speaking = true;
+
+      const done = () => { state.speaking = false; resolve(); };
+      // подстраховка: гарантированно вернуть управление
+      const safety = setTimeout(done,
+        Math.min(20000, 380 * text.split(/\s+/).length + 2000));
+
+      if (state.serverTTS) {
+        // серверный Piper: качаем WAV и проигрываем
+        const url = "/api/tts?text=" + encodeURIComponent(text);
+        try { state.audioEl && state.audioEl.pause(); } catch (_) {}
+        const a = new Audio(url);
+        state.audioEl = a;
+        a.onended = () => { clearTimeout(safety); done(); };
+        a.onerror = () => {
+          clearTimeout(safety);
+          console.warn("[voice] server TTS error → fallback на браузерный");
+          state.serverTTS = false;
+          speakBrowser(text).then(done);
+        };
+        a.play().catch(() => {
+          clearTimeout(safety);
+          state.serverTTS = false;
+          speakBrowser(text).then(done);
+        });
+      } else {
+        speakBrowser(text).then(() => { clearTimeout(safety); done(); });
+      }
+    });
+  }
+
+  function speakBrowser(text) {
+    return new Promise((resolve) => {
       try { window.speechSynthesis.cancel(); } catch (_) {}
       const u = new SpeechSynthesisUtterance(text);
       u.lang = "ru-RU";
       if (state.ruVoice) u.voice = state.ruVoice;
       u.rate = 1.0; u.pitch = 1.05;
-      u.onend = () => { state.speaking = false; resolve(); };
-      u.onerror = () => { state.speaking = false; resolve(); };
+      u.onend = () => resolve();
+      u.onerror = () => resolve();
       window.speechSynthesis.speak(u);
-      const ms = Math.min(15000, 350 * text.split(/\s+/).length + 1500);
-      setTimeout(() => { if (state.speaking) { state.speaking = false; resolve(); } }, ms);
     });
   }
 
@@ -251,6 +283,14 @@
     if (state.active) return;
     state.active = true;
 
+    // Спрашиваем сервер, есть ли локальный TTS (Piper). Если есть — берём его,
+    // иначе фолбэк на speechSynthesis браузера.
+    try {
+      const r = await fetch("/api/tts/status");
+      state.serverTTS = !!(await r.json()).available;
+    } catch (_) { state.serverTTS = false; }
+    console.log("[voice] server TTS:", state.serverTTS ? "Piper" : "browser");
+
     let greet = "Здравствуйте, меня зовут Оливия. Чем могу помочь?";
     try { greet = (await (await fetch("/api/greeting")).json()).text || greet; } catch (_) {}
     await speak(greet);
@@ -271,6 +311,7 @@
   function stop() {
     state.active = false;
     try { window.speechSynthesis.cancel(); } catch (_) {}
+    try { state.audioEl && state.audioEl.pause(); } catch (_) {}
     try { state.rec && state.rec.stop(); } catch (_) {}
     setMode("idle");
   }

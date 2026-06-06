@@ -21,8 +21,10 @@ WORKDIR /app
 FROM base AS web
 
 # WITH_STT=1 — доустановить faster-whisper для серверного распознавания речи
-# (нужно для Firefox и др. браузеров без Web Speech API). По умолчанию выкл.
+# WITH_TTS=1 — доустановить piper-tts для серверного синтеза речи (рекомендуется
+#              для медицины: голос полностью локальный, ничего в Google не уходит)
 ARG WITH_STT=0
+ARG WITH_TTS=0
 
 RUN uv venv --python python3 .venv
 
@@ -34,9 +36,14 @@ RUN uv pip install --python .venv/bin/python \
     "aiohttp>=3.9" \
     "requests>=2.31"
 
-# Опционально — серверный STT (тяжёлая зависимость, модель качается в рантайме)
+# Опционально — серверный STT (faster-whisper, модель ~150 МБ–1.5 ГБ в рантайме)
 RUN if [ "$WITH_STT" = "1" ]; then \
       uv pip install --python .venv/bin/python "faster-whisper>=1.0.0"; \
+    fi
+
+# Опционально — серверный TTS (Piper, голос ~63 МБ скачивается при первом запросе)
+RUN if [ "$WITH_TTS" = "1" ]; then \
+      uv pip install --python .venv/bin/python "piper-tts>=1.2.0"; \
     fi
 
 COPY src/ src/

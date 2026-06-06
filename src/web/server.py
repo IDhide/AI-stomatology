@@ -293,6 +293,29 @@ async def index(request: web.Request) -> web.Response:
     return web.FileResponse(WEB_DIR / "index.html")
 
 
+async def api_tts(request: web.Request) -> web.Response:
+    """
+    Серверный синтез речи (Piper). GET ?text=... → audio/wav.
+    Голос одинаковый в любом браузере, ничего наружу не уходит.
+    """
+    text = (request.query.get("text") or "").strip()
+    if not text:
+        return web.json_response({"error": "no text"}, status=400)
+    from . import tts
+    audio, err = await asyncio.to_thread(tts.synthesize, text)
+    if err:
+        return web.json_response({"error": err}, status=503)
+    return web.Response(body=audio, content_type="audio/wav",
+                        headers={"Cache-Control": "no-store"})
+
+
+async def api_tts_status(request: web.Request) -> web.Response:
+    """Проверка: доступен ли серверный TTS (чтобы клиент решил, использовать его)."""
+    from . import tts
+    available = await asyncio.to_thread(tts.is_available)
+    return web.json_response({"available": bool(available)})
+
+
 async def api_stt(request: web.Request) -> web.Response:
     """
     Серверное распознавание речи (для Firefox и др. без Web Speech API).
@@ -366,6 +389,8 @@ def build_app(auto_loop: bool = True) -> web.Application:
         web.get("/api/greeting", api_greeting),
         web.post("/api/message", api_message),
         web.post("/api/stt", api_stt),
+        web.get("/api/tts", api_tts),
+        web.get("/api/tts/status", api_tts_status),
     ])
     # статика
     app.router.add_static("/", path=str(WEB_DIR), name="web")
