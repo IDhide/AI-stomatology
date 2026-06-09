@@ -93,6 +93,28 @@ class DikidiClient:
                                    slot.get("master_name", ""))
         return data
 
+    # ── записи на приём (проверка на ресепшене) ─────────────
+    async def get_appointments(
+        self, time: str = "", name: str = "", date: str | None = None
+    ) -> list[dict]:
+        """Записи на сегодня, опционально фильтр по времени/имени."""
+        s = await self._sess()
+        params: dict[str, str] = {}
+        if time:
+            params["time"] = time
+        if name:
+            params["name"] = name
+        if date:
+            params["date"] = date
+        try:
+            async with s.get(f"{self.base_url}/v1/booking/appointments",
+                             params=params) as r:
+                r.raise_for_status()
+                return (await r.json()).get("data", [])
+        except Exception:
+            logger.exception("DIKIDI: ошибка получения записей")
+            return []
+
     # ── клиент ──────────────────────────────────────────────
     async def find_client(self, name: str = "", phone: str = "") -> dict:
         if not phone:

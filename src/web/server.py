@@ -40,6 +40,16 @@ from . import responder
 WEB_DIR = Path(__file__).resolve().parent.parent.parent / "web"
 ASSETS_DIR = Path(__file__).resolve().parent.parent.parent / "assets" / "videos"
 
+_YES_WORDS = {"да", "ага", "угу", "верно", "точно", "так", "это я", "я", "конечно",
+              "правильно", "именно", "ну да", "да это я"}
+
+
+def _is_yes(text: str) -> bool:
+    t = text.lower().replace("ё", "е").strip(" .,!?")
+    if t in _YES_WORDS:
+        return True
+    return any(w in t.split() for w in ("да", "верно", "точно", "правильно", "именно"))
+
 
 # ────────────────────────────────────────────────────────────
 #  Шина событий → всем подключённым браузерам
@@ -209,14 +219,14 @@ async def api_greeting(request: web.Request) -> web.Response:
     session = request.app["session"]
     session["cid"] = None
     session["offtopic"] = 0
+    session["checkin"] = None
     llm = request.app.get("llm")
     if llm is not None and hasattr(llm, "reset_conversation"):
         llm.reset_conversation()
 
     source = request.query.get("source", "")
     if source == "camera":
-        text = ("Здравствуйте! Меня зовут Оливия, администратор клиники "
-                "«Стоматология номер один». Подскажите, как вас зовут?")
+        text = ("Здравствуйте! Меня зовут Оливия. Чем могу вам помочь?")
         if llm is not None:
             llm.history.append({
                 "user": "[пациент подошёл к стойке — камера обнаружила лицо]",
@@ -266,15 +276,48 @@ async def api_message(request: web.Request) -> web.Response:
     if not responder.is_relevant(user_text):
         session["offtopic"] += 1
         logger.info(f"🙊 нерелевантно ({session['offtopic']}): {user_text!r}")
-        if session["offtopic"] == 3:
-            session["offtopic"] = 0
-            nudge = ("Если вам нужна стоматология — подскажите, что вас беспокоит, "
-                     "и я помогу с записью?")
-            return web.json_response({"reply": nudge, "nudge": True})
+        # не навязываемся: фоновую/нерелевантную речь просто игнорируем
         return web.json_response({"reply": "", "ignored": True})
 
     session["offtopic"] = 0
     logger.info(f"🎤 пациент: {user_text!r}")
+
+    # Пришёл по записи → проверяем запись на сегодня в DIKIDI
+    if responder.wants_checkin(user_text):
+        dikidi = request.app["dikidi"]
+        tm = responder.extract_time(user_text)
+        try:
+            appts = await dikidi.get_appointments(time=tm or "")
+        except Exception:
+            logger.exception("DIKIDI недоступен")
+            appts = []
+        if appts:
+            a = appts[0]
+            session["checkin"] = a
+            answer = f"Вы {a['client_name']}?"
+        elif tm:
+            answer = (f"На {tm} записи не вижу. Уточните, пожалуйста, "
+                      "время или назовите ваше имя?")
+        else:
+            answer = "Подскажите, на какое время у вас запись?"
+        logger.info(f"💬 Оливия: {answer!r}")
+        if session.get("cid") is None:
+            session["cid"] = conv.start_conversation()
+        conv.log_message(session["cid"], "user", user_text)
+        conv.log_message(session["cid"], "assistant", answer)
+        return web.json_response({"reply": answer})
+
+    # Подтверждение имени после проверки записи → проводим в зону ожидания
+    if session.get("checkin") and _is_yes(user_text):
+        a = session.pop("checkin")
+        answer = (f"Вижу вашу запись на {a['time']}, врач {a['master_name']}. "
+                  "Присаживайтесь и ожидайте, врач вас пригласит.")
+        logger.info(f"💬 Оливия: {answer!r}")
+        if session.get("cid") is None:
+            session["cid"] = conv.start_conversation()
+        conv.log_message(session["cid"], "user", user_text)
+        conv.log_message(session["cid"], "assistant", answer)
+        return web.json_response({"reply": answer})
 
     # Запрос времени/записи → реально спрашиваем окна в тестовом DIKIDI
     if responder.wants_slots(user_text):
@@ -403,7 +446,7 @@ def build_app(auto_loop: bool = True) -> web.Application:
     app["llm"] = llm
     app["auto_loop"] = auto_loop
     # состояние сессии киоска (изменяемый dict — без мутации app после старта)
-    app["session"] = {"cid": None, "offtopic": 0}
+    app["session"] = {"cid": None, "offtopic": 0, "checkin": None}
 
     app.add_routes([
         web.get("/", index),
