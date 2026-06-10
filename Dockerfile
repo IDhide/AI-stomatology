@@ -53,7 +53,10 @@ RUN if [ "$WITH_TTS" = "1" ] && [ "$TTS_ENGINE" = "piper" ]; then \
       uv pip install --python .venv/bin/python "piper-tts>=1.2.0"; \
     fi
 # Клонирование голоса (Qwen3-TTS-VC) — нужен GPU/CUDA. torch CUDA + qwen-tts.
+# sox нужен qwen-tts для обработки аудио.
 RUN if [ "$WITH_TTS" = "1" ] && [ "$TTS_ENGINE" = "qwen3vc" ]; then \
+      apt-get update -q && apt-get install -y --no-install-recommends sox libsox-fmt-all && \
+      rm -rf /var/lib/apt/lists/* && \
       uv pip install --python .venv/bin/python \
         "torch>=2.1" "numpy>=1.24" "soundfile>=0.12" "qwen-tts"; \
     fi
