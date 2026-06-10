@@ -32,9 +32,9 @@ from pathlib import Path
 from aiohttp import web
 from loguru import logger
 
-from ..dikidi.client import DikidiClient
-from ..core.conversation_logger import ConversationLogger
 from ..core.config import load_config
+from ..core.conversation_logger import ConversationLogger
+from ..dikidi.client import DikidiClient
 from . import responder
 
 WEB_DIR = Path(__file__).resolve().parent.parent.parent / "web"
@@ -91,7 +91,7 @@ class KioskScenario:
     данные об окнах/услугах берутся из симулятора DIKIDI.
     """
 
-    def __init__(self, bus: EventBus, dikidi: DikidiClientStub,
+    def __init__(self, bus: EventBus, dikidi: DikidiClient,
                  conv: ConversationLogger) -> None:
         self.bus = bus
         self.dikidi = dikidi

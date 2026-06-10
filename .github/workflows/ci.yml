@@ -72,7 +72,7 @@ jobs:
         with:
           context: .
           file: ./Dockerfile
-          target: deps
+          target: web
           push: false
           tags: smile-ai:ci-deps
           cache-from: type=gha
