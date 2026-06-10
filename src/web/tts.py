@@ -3,11 +3,12 @@ tts.py
 ======
 Серверный синтез речи (TTS). Отдаёт WAV в браузер.
 
-Два движка (выбор через TTS_ENGINE):
+Движки (выбор через TTS_ENGINE):
+  • qwen3vc — КЛОНИРОВАНИЕ голоса из образца (Qwen3-TTS-VC). Говорит голосом
+              из вашего референс-аудио: живая интонация, ударения, мягкий тембр.
+              Требует GPU (CUDA). Полностью локально (важно для медицины).
   • silero  — естественный человеческий женский голос (по умолчанию).
-              Русские голоса Silero v4 (baya/xenia/kseniya) звучат живо,
-              с интонацией и правильными ударениями. Работает на CPU,
-              полностью локально (важно для медицины — ничего не уходит наружу).
+              Русские голоса Silero v4 (baya/xenia/kseniya), CPU, локально.
   • piper    — лёгкий запасной движок (ru_RU/irina), если нет torch.
 
 Зачем сервер, а не браузер: голос Web Speech API зависит от ОС/браузера
@@ -15,7 +16,15 @@ tts.py
 одинаковый красивый голос в любом браузере.
 
 Переменные окружения:
-  TTS_ENGINE          — silero | piper (по умолчанию silero)
+  TTS_ENGINE          — qwen3vc | silero | piper (по умолчанию silero)
+  ── Qwen3-TTS-VC (клонирование голоса, GPU) ──
+  QWEN_REF_AUDIO      — путь к образцу голоса (wav/mp3, 10–15 с чистой речи)
+  QWEN_REF_TEXT       — точная расшифровка образца (что произнесено в нём)
+  QWEN_REF_TEXT_FILE  — либо файл с расшифровкой (альтернатива QWEN_REF_TEXT)
+  QWEN_TTS_MODEL      — модель (по умолчанию Qwen/Qwen3-TTS-12Hz-1.7B-Base)
+  QWEN_DEVICE         — cuda:0 | cuda | cpu (по умолчанию cuda:0)
+  QWEN_LANGUAGE       — язык синтеза (по умолчанию Russian)
+  QWEN_ATTN           — flash_attention_2 | sdpa | eager (по умолчанию sdpa)
   ── Silero ──
   SILERO_SPEAKER      — голос: baya | xenia | kseniya | eugene | aidar
                         (по умолчанию baya — тёплый женский тембр)
@@ -42,6 +51,119 @@ _load_error: str | None = None
 
 def _engine() -> str:
     return os.getenv("TTS_ENGINE", "silero").strip().lower()
+
+
+# ════════════════════════════════════════════════════════════════════
+#  Qwen3-TTS-VC — клонирование голоса из образца (GPU)
+# ════════════════════════════════════════════════════════════════════
+_qwen_model = None
+_qwen_prompt = None  # переиспользуемый voice-clone prompt (извлекаем тембр один раз)
+
+
+def _qwen_ref_text() -> str:
+    txt = os.getenv("QWEN_REF_TEXT", "").strip()
+    if txt:
+        return txt
+    f = os.getenv("QWEN_REF_TEXT_FILE", "").strip()
+    if f and Path(f).exists():
+        return Path(f).read_text(encoding="utf-8").strip()
+    return ""
+
+
+def _get_qwen():
+    """Ленивая загрузка Qwen3-TTS-VC и подготовка voice-clone prompt."""
+    global _qwen_model, _qwen_prompt, _load_error
+    if _qwen_model is not None:
+        return _qwen_model
+    if _load_error is not None:
+        return None
+
+    ref_audio = os.getenv("QWEN_REF_AUDIO", "").strip()
+    ref_text = _qwen_ref_text()
+    if not ref_audio or not Path(ref_audio).exists():
+        _load_error = f"QWEN_REF_AUDIO не найден ({ref_audio or 'не задан'})"
+        logger.error(f"TTS Qwen: {_load_error}")
+        return None
+    if not ref_text:
+        _load_error = "QWEN_REF_TEXT/QWEN_REF_TEXT_FILE не заданы (нужна расшифровка образца)"
+        logger.error(f"TTS Qwen: {_load_error}")
+        return None
+
+    try:
+        import torch  # type: ignore
+        from qwen_tts import Qwen3TTSModel  # type: ignore
+    except Exception as e:
+        _load_error = f"qwen-tts/torch не установлены ({e})"
+        logger.warning(f"TTS Qwen недоступен: {_load_error}. Установите: pip install qwen-tts")
+        return None
+
+    model_name = os.getenv("QWEN_TTS_MODEL", "Qwen/Qwen3-TTS-12Hz-1.7B-Base")
+    device = os.getenv("QWEN_DEVICE", "cuda:0")
+    attn = os.getenv("QWEN_ATTN", "sdpa")
+    dtype = torch.bfloat16 if "cuda" in device else torch.float32
+
+    try:
+        logger.info(f"TTS: загружаю Qwen3-TTS-VC {model_name} ({device}, attn={attn})…")
+        try:
+            model = Qwen3TTSModel.from_pretrained(
+                model_name, device_map=device, dtype=dtype, attn_implementation=attn,
+            )
+        except Exception as e:
+            # flash_attention_2 часто недоступен — повторяем на безопасном sdpa
+            logger.warning(f"Qwen: attn={attn} не сработал ({e}), пробую sdpa")
+            model = Qwen3TTSModel.from_pretrained(
+                model_name, device_map=device, dtype=dtype, attn_implementation="sdpa",
+            )
+        _qwen_model = model
+
+        # извлекаем тембр из образца ОДИН раз — дальше переиспользуем
+        if hasattr(model, "create_voice_clone_prompt"):
+            try:
+                _qwen_prompt = model.create_voice_clone_prompt(
+                    ref_audio=ref_audio, ref_text=ref_text,
+                )
+                logger.success("Qwen: voice-clone prompt готов (тембр извлечён из образца)")
+            except Exception as e:
+                logger.warning(f"Qwen: create_voice_clone_prompt не удался ({e}), "
+                               "буду передавать образец каждый раз")
+                _qwen_prompt = None
+        logger.success("TTS готов (Qwen3-TTS-VC — клонированный голос)")
+        return _qwen_model
+    except Exception as e:
+        _load_error = f"не удалось загрузить Qwen3-TTS-VC ({e})"
+        logger.error(f"TTS: {_load_error}")
+        return None
+
+
+def _qwen_synthesize(text: str) -> tuple[bytes, str | None]:
+    model = _get_qwen()
+    if model is None:
+        return b"", _load_error or "qwen_unavailable"
+    import numpy as np
+
+    language = os.getenv("QWEN_LANGUAGE", "Russian")
+    ref_audio = os.getenv("QWEN_REF_AUDIO", "").strip()
+    ref_text = _qwen_ref_text()
+    try:
+        kwargs: dict = {"text": text, "language": language}
+        if _qwen_prompt is not None:
+            kwargs["voice_clone_prompt"] = _qwen_prompt
+        else:
+            kwargs["ref_audio"] = ref_audio
+            kwargs["ref_text"] = ref_text
+        wavs, sr = model.generate_voice_clone(**kwargs)
+        wav = np.asarray(wavs[0], dtype="float32")
+        pcm16 = (np.clip(wav, -1.0, 1.0) * 32767).astype("<i2")
+        buf = io.BytesIO()
+        with wave.open(buf, "wb") as wf:
+            wf.setnchannels(1)
+            wf.setsampwidth(2)
+            wf.setframerate(int(sr))
+            wf.writeframes(pcm16.tobytes())
+        return buf.getvalue(), None
+    except Exception as e:
+        logger.exception("Qwen synthesize error")
+        return b"", f"synth_failed: {e}"
 
 
 # ════════════════════════════════════════════════════════════════════
@@ -240,7 +362,10 @@ def _piper_synthesize(text: str) -> tuple[bytes, str | None]:
 #  Публичный API
 # ════════════════════════════════════════════════════════════════════
 def is_available() -> bool:
-    if _engine() == "piper":
+    eng = _engine()
+    if eng == "qwen3vc":
+        return _get_qwen() is not None
+    if eng == "piper":
         return _get_piper() is not None
     return _get_silero() is not None
 
@@ -249,6 +374,9 @@ def synthesize(text: str) -> tuple[bytes, str | None]:
     """Синтезирует речь → (WAV-байты, ошибка)."""
     if not text or not text.strip():
         return b"", "empty_text"
-    if _engine() == "piper":
+    eng = _engine()
+    if eng == "qwen3vc":
+        return _qwen_synthesize(text)
+    if eng == "piper":
         return _piper_synthesize(text)
     return _silero_synthesize(text)

@@ -52,6 +52,11 @@ RUN if [ "$WITH_TTS" = "1" ] && [ "$TTS_ENGINE" = "silero" ]; then \
 RUN if [ "$WITH_TTS" = "1" ] && [ "$TTS_ENGINE" = "piper" ]; then \
       uv pip install --python .venv/bin/python "piper-tts>=1.2.0"; \
     fi
+# Клонирование голоса (Qwen3-TTS-VC) — нужен GPU/CUDA. torch CUDA + qwen-tts.
+RUN if [ "$WITH_TTS" = "1" ] && [ "$TTS_ENGINE" = "qwen3vc" ]; then \
+      uv pip install --python .venv/bin/python \
+        "torch>=2.1" "numpy>=1.24" "soundfile>=0.12" "qwen-tts"; \
+    fi
 
 # Опционально — детекция лиц камерой (OpenCV, ~50 МБ)
 ARG WITH_CAMERA=0
