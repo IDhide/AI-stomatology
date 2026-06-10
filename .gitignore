@@ -53,12 +53,11 @@ Thumbs.db
 assets/videos/*.mp4
 assets/videos/*.avi
 
-# Образцы голоса (личные данные — не коммитим)
+# Образцы голоса: само АУДИО (биометрия) не коммитим, расшифровку — можно.
 assets/voice/*.wav
 assets/voice/*.mp3
 assets/voice/*.flac
 assets/voice/*.ogg
-assets/voice/reference.txt
 
 # pytest
 .pytest_cache/
