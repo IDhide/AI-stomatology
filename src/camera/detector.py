@@ -66,12 +66,20 @@ def _run_loop(
     if on_status:
         on_status(_status)
     logger.info(f"Камера: подключаюсь к {source}…")
+    # Не сдаёмся сразу: поток может появиться позже (например, после
+    # настройки камеры в веб-интерфейсе go2rtc) — повторяем каждые 5 с.
     cap = cv2.VideoCapture(source)
-    if not cap.isOpened():
-        _status = {"state": "error", "source": str(source), "error": "не удалось открыть"}
+    while not cap.isOpened() and not _stop_flag:
+        _status = {"state": "error", "source": str(source),
+                   "error": "поток недоступен, повтор через 5с"}
         if on_status:
             on_status(_status)
-        logger.error(f"Камера: не удалось открыть {source}")
+        logger.error(f"Камера: не удалось открыть {source}, повтор через 5с…")
+        cap.release()
+        time.sleep(5)
+        cap = cv2.VideoCapture(source)
+    if _stop_flag:
+        cap.release()
         return
     _status = {"state": "connected", "source": str(source), "error": ""}
     if on_status:

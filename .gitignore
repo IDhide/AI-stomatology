@@ -59,6 +59,9 @@ assets/voice/*.mp3
 assets/voice/*.flac
 assets/voice/*.ogg
 
+# go2rtc: рабочий конфиг хранит токен Mi Cloud (секрет). Коммитим только шаблон.
+config/go2rtc.yaml
+
 # pytest
 .pytest_cache/
 .coverage
