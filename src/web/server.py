@@ -382,6 +382,14 @@ async def api_stt_status(request: web.Request) -> web.Response:
     return web.json_response({"available": bool(available)})
 
 
+async def api_camera_status(request: web.Request) -> web.Response:
+    """Статус серверной камеры (Xiaomi C200 / RTSP / USB)."""
+    if os.getenv("CAMERA_SOURCE", "").strip():
+        from ..camera import detector
+        return web.json_response(detector.get_status())
+    return web.json_response({"state": "off", "source": "", "error": ""})
+
+
 async def api_stt(request: web.Request) -> web.Response:
     """
     Серверное распознавание речи (для Firefox и др. без Web Speech API).
@@ -458,6 +466,7 @@ def build_app(auto_loop: bool = True) -> web.Application:
         web.get("/api/stt/status", api_stt_status),
         web.get("/api/tts", api_tts),
         web.get("/api/tts/status", api_tts_status),
+        web.get("/api/camera/status", api_camera_status),
     ])
     # статика
     app.router.add_static("/", path=str(WEB_DIR), name="web")
@@ -485,7 +494,12 @@ def build_app(auto_loop: bool = True) -> web.Application:
                     "type": "camera", "event": "person_left"
                 }), loop)
 
-            if detector.start(_on_person, _on_left):
+            def _on_status(status):
+                asyncio.run_coroutine_threadsafe(bus.publish({
+                    "type": "camera_status", **status
+                }), loop)
+
+            if detector.start(_on_person, _on_left, _on_status):
                 logger.success("Камера: серверная детекция запущена")
 
     async def on_cleanup(app: web.Application) -> None:

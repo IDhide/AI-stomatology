@@ -330,12 +330,57 @@
     setMode("idle");
   }
 
+  // ── индикатор камеры ────────────────────────────────────
+  function buildCameraBadge() {
+    if (document.getElementById("cam-badge")) return;
+    const el = document.createElement("div");
+    el.id = "cam-badge";
+    el.innerHTML = '<span id="cam-dot"></span><span id="cam-label">камера…</span>';
+    document.body.appendChild(el);
+    fetch("/api/camera/status")
+      .then((r) => r.json())
+      .then((d) => updateCameraBadge(d))
+      .catch(() => {});
+  }
+
+  function updateCameraBadge(d) {
+    const dot = document.getElementById("cam-dot");
+    const lbl = document.getElementById("cam-label");
+    if (!dot || !lbl) return;
+    const badge = document.getElementById("cam-badge");
+    const st = d.state || "off";
+    if (st === "off") {
+      badge.style.display = "none";
+      return;
+    }
+    badge.style.display = "flex";
+    const src = d.source || "";
+    const shortSrc = src.includes("xiaomi") ? "Xiaomi C200"
+      : src.startsWith("rtsp") ? "RTSP"
+      : src.match(/^\d+$/) ? "USB-" + src : src.substring(0, 20);
+    const map = {
+      connecting:   { color: "#f2a13c", text: shortSrc + " — подключение…" },
+      connected:    { color: "#36c79b", text: shortSrc + " — подключена" },
+      reconnecting: { color: "#f2a13c", text: shortSrc + " — переподключение…" },
+      error:        { color: "#ff4466", text: shortSrc + " — ошибка" },
+    };
+    const info = map[st] || { color: "#3a4a66", text: st };
+    dot.style.background = info.color;
+    dot.style.boxShadow = "0 0 8px " + info.color;
+    lbl.textContent = info.text;
+  }
+
   // ── серверная камера (SSE) ─────────────────────────────
   function connectCamera() {
+    buildCameraBadge();
     const es = new EventSource("/api/events");
     es.onmessage = (e) => {
       try {
         const d = JSON.parse(e.data);
+        if (d.type === "camera_status") {
+          updateCameraBadge(d);
+          return;
+        }
         if (d.type !== "camera") return;
         if (d.event === "person_detected" && !state.active) {
           const ov = document.getElementById("start-overlay");

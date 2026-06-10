@@ -28,6 +28,7 @@ from loguru import logger
 
 _detector_thread: Thread | None = None
 _stop_flag = False
+_status: dict = {"state": "off", "source": "", "error": ""}
 
 
 def _resolve_source() -> str | int | None:
@@ -46,22 +47,35 @@ def _run_loop(
     lost_after: float,
     on_detected: Callable[[], None],
     on_left: Callable[[], None],
+    on_status: Callable[[dict], None] | None = None,
 ) -> None:
-    global _stop_flag
+    global _stop_flag, _status
     try:
         import cv2
     except ImportError:
+        _status = {"state": "error", "source": str(source), "error": "opencv не установлен"}
+        if on_status:
+            on_status(_status)
         logger.error("opencv-python-headless не установлен — камера не работает")
         return
 
     cascade_path = cv2.data.haarcascades + "haarcascade_frontalface_default.xml"
     face_cascade = cv2.CascadeClassifier(cascade_path)
 
+    _status = {"state": "connecting", "source": str(source), "error": ""}
+    if on_status:
+        on_status(_status)
     logger.info(f"Камера: подключаюсь к {source}…")
     cap = cv2.VideoCapture(source)
     if not cap.isOpened():
+        _status = {"state": "error", "source": str(source), "error": "не удалось открыть"}
+        if on_status:
+            on_status(_status)
         logger.error(f"Камера: не удалось открыть {source}")
         return
+    _status = {"state": "connected", "source": str(source), "error": ""}
+    if on_status:
+        on_status(_status)
     logger.success(f"Камера: подключена ({source})")
 
     person_present = False
@@ -73,10 +87,17 @@ def _run_loop(
         time.sleep(frame_interval)
         ret, frame = cap.read()
         if not ret:
+            _status = {"state": "reconnecting", "source": str(source), "error": "потеря кадра"}
+            if on_status:
+                on_status(_status)
             logger.warning("Камера: не удалось прочитать кадр, переподключение…")
             cap.release()
             time.sleep(2)
             cap = cv2.VideoCapture(source)
+            if cap.isOpened():
+                _status = {"state": "connected", "source": str(source), "error": ""}
+                if on_status:
+                    on_status(_status)
             continue
 
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
@@ -106,12 +127,16 @@ def _run_loop(
                     logger.exception("on_left callback error")
 
     cap.release()
+    _status = {"state": "off", "source": str(source), "error": ""}
+    if on_status:
+        on_status(_status)
     logger.info("Камера: остановлена")
 
 
 def start(
     on_detected: Callable[[], None],
     on_left: Callable[[], None],
+    on_status: Callable[[dict], None] | None = None,
 ) -> bool:
     """Запустить детекцию в фоновом потоке. Возвращает True если камера настроена."""
     global _detector_thread, _stop_flag
@@ -127,7 +152,7 @@ def start(
     _stop_flag = False
     _detector_thread = Thread(
         target=_run_loop,
-        args=(source, fps, cooldown, lost_after, on_detected, on_left),
+        args=(source, fps, cooldown, lost_after, on_detected, on_left, on_status),
         daemon=True,
         name="camera-detector",
     )
@@ -135,6 +160,11 @@ def start(
     return True
 
 
+def get_status() -> dict:
+    return dict(_status)
+
+
 def stop() -> None:
-    global _stop_flag
+    global _stop_flag, _status
     _stop_flag = True
+    _status = {"state": "off", "source": _status.get("source", ""), "error": ""}
