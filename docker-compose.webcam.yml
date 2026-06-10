@@ -1,0 +1,29 @@
+# ════════════════════════════════════════════════════════════════════
+#  Smile.AI — НАДСТРОЙКА «USB-вебкамера» (вместо Xiaomi/go2rtc)
+#
+#  Для обычной USB-камеры или встроенной вебки ноутбука. Без go2rtc и
+#  без облака — OpenCV берёт поток напрямую с /dev/video0.
+#
+#  Запуск:
+#    make webcam          # базовый стенд + вебка
+#    make smart-webcam    # умный мозг + вебка
+#    # с клонированным голосом добавьте -f docker-compose.qwen.yml
+#
+#  Если камера не /dev/video0, укажите свою:
+#    CAMERA_SOURCE=2 make webcam   (и поправьте devices ниже под /dev/video2)
+# ════════════════════════════════════════════════════════════════════
+
+services:
+
+  web:
+    build:
+      args:
+        WITH_CAMERA: "1"
+    environment:
+      CAMERA_SOURCE: "${CAMERA_SOURCE:-0}"
+      CAMERA_FPS: "${CAMERA_FPS:-5}"
+      CAMERA_COOLDOWN: "${CAMERA_COOLDOWN:-30}"
+      CAMERA_LOST_AFTER: "${CAMERA_LOST_AFTER:-5}"
+    # проброс USB-камеры в контейнер (Linux)
+    devices:
+      - "/dev/video0:/dev/video0"
