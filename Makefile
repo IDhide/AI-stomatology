@@ -3,7 +3,7 @@
 #  Использование: make <target>
 # ════════════════════════════════════════════════════════════════════
 
-.PHONY: help demo demo-down demo-logs smart smart-down camera smart-camera camera-down qwen qwen-down test lint clean
+.PHONY: help demo demo-down demo-logs smart smart-down camera smart-camera camera-down qwen qwen-down full full-down test lint clean
 
 COMPOSE_DEMO = docker compose -f docker-compose.demo.yml
 COMPOSE_CAMERA = -f docker-compose.camera.yml
@@ -42,6 +42,12 @@ qwen: ## Умный стенд + клонированный голос (Qwen3-TT
 
 qwen-down: ## Остановить стенд с клонированным голосом
 	$(COMPOSE_DEMO) -f docker-compose.smart.yml -f docker-compose.qwen.yml down
+
+full: ## ВСЁ: Ollama + камера (Xiaomi C200) + голос Qwen (GPU) → http://localhost:8080
+	$(COMPOSE_DEMO) -f docker-compose.smart.yml $(COMPOSE_CAMERA) -f docker-compose.qwen.yml up --build
+
+full-down: ## Остановить полный стенд
+	$(COMPOSE_DEMO) -f docker-compose.smart.yml $(COMPOSE_CAMERA) -f docker-compose.qwen.yml down
 
 # ── Разработка ────────────────────────────────────────────────────
 test: ## Тесты (dental + config)
