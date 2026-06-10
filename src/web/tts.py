@@ -46,7 +46,10 @@ from pathlib import Path
 
 from loguru import logger
 
-_load_error: str | None = None
+# Раздельные ошибки на каждый движок — чтобы падение одного не блокировало другие.
+_qwen_error: str | None = None
+_silero_error: str | None = None
+_piper_error: str | None = None
 
 
 def _engine() -> str:
@@ -70,31 +73,42 @@ def _qwen_ref_text() -> str:
     return ""
 
 
+def _free_cuda():
+    """Освободить GPU-память после неудачной загрузки модели."""
+    try:
+        import torch  # type: ignore
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+            torch.cuda.ipc_collect()
+    except Exception:
+        pass
+
+
 def _get_qwen():
     """Ленивая загрузка Qwen3-TTS-VC и подготовка voice-clone prompt."""
-    global _qwen_model, _qwen_prompt, _load_error
+    global _qwen_model, _qwen_prompt, _qwen_error
     if _qwen_model is not None:
         return _qwen_model
-    if _load_error is not None:
+    if _qwen_error is not None:
         return None
 
     ref_audio = os.getenv("QWEN_REF_AUDIO", "").strip()
     ref_text = _qwen_ref_text()
     if not ref_audio or not Path(ref_audio).exists():
-        _load_error = f"QWEN_REF_AUDIO не найден ({ref_audio or 'не задан'})"
-        logger.error(f"TTS Qwen: {_load_error}")
+        _qwen_error = f"QWEN_REF_AUDIO не найден ({ref_audio or 'не задан'})"
+        logger.error(f"TTS Qwen: {_qwen_error}")
         return None
     if not ref_text:
-        _load_error = "QWEN_REF_TEXT/QWEN_REF_TEXT_FILE не заданы (нужна расшифровка образца)"
-        logger.error(f"TTS Qwen: {_load_error}")
+        _qwen_error = "QWEN_REF_TEXT/QWEN_REF_TEXT_FILE не заданы (нужна расшифровка образца)"
+        logger.error(f"TTS Qwen: {_qwen_error}")
         return None
 
     try:
         import torch  # type: ignore
         from qwen_tts import Qwen3TTSModel  # type: ignore
     except Exception as e:
-        _load_error = f"qwen-tts/torch не установлены ({e})"
-        logger.warning(f"TTS Qwen недоступен: {_load_error}. Установите: pip install qwen-tts")
+        _qwen_error = f"qwen-tts/torch не установлены ({e})"
+        logger.warning(f"TTS Qwen недоступен: {_qwen_error}. Установите: pip install qwen-tts")
         return None
 
     model_name = os.getenv("QWEN_TTS_MODEL", "Qwen/Qwen3-TTS-12Hz-1.7B-Base")
@@ -102,43 +116,53 @@ def _get_qwen():
     attn = os.getenv("QWEN_ATTN", "sdpa")
     dtype = torch.bfloat16 if "cuda" in device else torch.float32
 
-    try:
-        logger.info(f"TTS: загружаю Qwen3-TTS-VC {model_name} ({device}, attn={attn})…")
-        try:
-            model = Qwen3TTSModel.from_pretrained(
-                model_name, device_map=device, dtype=dtype, attn_implementation=attn,
-            )
-        except Exception as e:
-            # flash_attention_2 часто недоступен — повторяем на безопасном sdpa
-            logger.warning(f"Qwen: attn={attn} не сработал ({e}), пробую sdpa")
-            model = Qwen3TTSModel.from_pretrained(
-                model_name, device_map=device, dtype=dtype, attn_implementation="sdpa",
-            )
-        _qwen_model = model
+    # Цепочка попыток: сначала выбранный attn, потом eager (минимум памяти).
+    # При OOM/нехватке памяти повторяем на eager. Если и это не лезет — сдаёмся
+    # и фолбэк (Silero) подхватится выше в synthesize().
+    attempts = [attn]
+    if attn != "eager":
+        attempts.append("eager")
 
-        # извлекаем тембр из образца ОДИН раз — дальше переиспользуем
-        if hasattr(model, "create_voice_clone_prompt"):
-            try:
-                _qwen_prompt = model.create_voice_clone_prompt(
-                    ref_audio=ref_audio, ref_text=ref_text,
-                )
-                logger.success("Qwen: voice-clone prompt готов (тембр извлечён из образца)")
-            except Exception as e:
-                logger.warning(f"Qwen: create_voice_clone_prompt не удался ({e}), "
-                               "буду передавать образец каждый раз")
-                _qwen_prompt = None
-        logger.success("TTS готов (Qwen3-TTS-VC — клонированный голос)")
-        return _qwen_model
-    except Exception as e:
-        _load_error = f"не удалось загрузить Qwen3-TTS-VC ({e})"
-        logger.error(f"TTS: {_load_error}")
+    last_exc: Exception | None = None
+    for attempt_attn in attempts:
+        try:
+            logger.info(f"TTS: загружаю Qwen3-TTS-VC {model_name} ({device}, attn={attempt_attn})…")
+            model = Qwen3TTSModel.from_pretrained(
+                model_name, device_map=device, dtype=dtype,
+                attn_implementation=attempt_attn,
+            )
+            _qwen_model = model
+            break
+        except Exception as e:
+            last_exc = e
+            logger.warning(f"Qwen: загрузка с attn={attempt_attn} не удалась ({e})")
+            # подчищаем недо-загруженные тензоры с GPU перед следующей попыткой
+            _free_cuda()
+
+    if _qwen_model is None:
+        _qwen_error = f"не удалось загрузить Qwen3-TTS-VC ({last_exc})"
+        logger.error(f"TTS: {_qwen_error}")
         return None
+
+    # извлекаем тембр из образца ОДИН раз — дальше переиспользуем
+    if hasattr(_qwen_model, "create_voice_clone_prompt"):
+        try:
+            _qwen_prompt = _qwen_model.create_voice_clone_prompt(
+                ref_audio=ref_audio, ref_text=ref_text,
+            )
+            logger.success("Qwen: voice-clone prompt готов (тембр извлечён из образца)")
+        except Exception as e:
+            logger.warning(f"Qwen: create_voice_clone_prompt не удался ({e}), "
+                           "буду передавать образец каждый раз")
+            _qwen_prompt = None
+    logger.success("TTS готов (Qwen3-TTS-VC — клонированный голос)")
+    return _qwen_model
 
 
 def _qwen_synthesize(text: str) -> tuple[bytes, str | None]:
     model = _get_qwen()
     if model is None:
-        return b"", _load_error or "qwen_unavailable"
+        return b"", _qwen_error or "qwen_unavailable"
     import numpy as np
 
     language = os.getenv("QWEN_LANGUAGE", "Russian")
@@ -179,16 +203,16 @@ def _silero_dir() -> Path:
 
 def _get_silero():
     """Ленивая загрузка Silero (один раз на процесс)."""
-    global _silero_model, _load_error
+    global _silero_model, _silero_error
     if _silero_model is not None:
         return _silero_model
-    if _load_error is not None:
+    if _silero_error is not None:
         return None
     try:
         import torch  # type: ignore
     except Exception as e:
-        _load_error = f"torch не установлен ({e})"
-        logger.warning(f"TTS Silero недоступен: {_load_error}")
+        _silero_error = f"torch не установлен ({e})"
+        logger.warning(f"TTS Silero недоступен: {_silero_error}")
         return None
 
     d = _silero_dir()
@@ -200,8 +224,8 @@ def _get_silero():
             torch.hub.download_url_to_file(_SILERO_URL, str(model_path))
             logger.success(f"Silero: модель загружена ({model_path.stat().st_size // 1024 // 1024} МБ)")
         except Exception as e:
-            _load_error = f"не удалось скачать модель Silero: {e}"
-            logger.error(f"TTS: {_load_error}")
+            _silero_error = f"не удалось скачать модель Silero: {e}"
+            logger.error(f"TTS: {_silero_error}")
             return None
 
     try:
@@ -213,8 +237,8 @@ def _get_silero():
         logger.success("TTS готов (Silero, голос — живой женский)")
         return _silero_model
     except Exception as e:
-        _load_error = f"не удалось загрузить Silero ({e})"
-        logger.error(f"TTS: {_load_error}")
+        _silero_error = f"не удалось загрузить Silero ({e})"
+        logger.error(f"TTS: {_silero_error}")
         return None
 
 
@@ -238,7 +262,7 @@ def _split_for_silero(text: str, limit: int = 900) -> list[str]:
 def _silero_synthesize(text: str) -> tuple[bytes, str | None]:
     model = _get_silero()
     if model is None:
-        return b"", _load_error or "silero_unavailable"
+        return b"", _silero_error or "silero_unavailable"
     import numpy as np  # идёт вместе с torch
 
     speaker = os.getenv("SILERO_SPEAKER", "baya").strip() or "baya"
@@ -308,16 +332,16 @@ def _download_piper() -> Path | None:
 
 
 def _get_piper():
-    global _piper_voice, _load_error
+    global _piper_voice, _piper_error
     if _piper_voice is not None:
         return _piper_voice
-    if _load_error is not None:
+    if _piper_error is not None:
         return None
     try:
         from piper import PiperVoice  # type: ignore
     except Exception as e:
-        _load_error = f"piper-tts не установлен ({e})"
-        logger.warning(f"TTS Piper недоступен: {_load_error}")
+        _piper_error = f"piper-tts не установлен ({e})"
+        logger.warning(f"TTS Piper недоступен: {_piper_error}")
         return None
 
     explicit = os.getenv("PIPER_VOICE", "").strip()
@@ -325,8 +349,8 @@ def _get_piper():
     if onnx is None or not onnx.exists():
         onnx = _download_piper()
     if onnx is None or not onnx.exists():
-        _load_error = "модель Piper не найдена"
-        logger.error(f"TTS: {_load_error}")
+        _piper_error = "модель Piper не найдена"
+        logger.error(f"TTS: {_piper_error}")
         return None
     try:
         logger.info(f"TTS: загружаю Piper {onnx.name}…")
@@ -334,15 +358,15 @@ def _get_piper():
         logger.success("TTS готов (Piper)")
         return _piper_voice
     except Exception as e:
-        _load_error = f"не удалось загрузить Piper ({e})"
-        logger.error(f"TTS: {_load_error}")
+        _piper_error = f"не удалось загрузить Piper ({e})"
+        logger.error(f"TTS: {_piper_error}")
         return None
 
 
 def _piper_synthesize(text: str) -> tuple[bytes, str | None]:
     voice = _get_piper()
     if voice is None:
-        return b"", _load_error or "piper_unavailable"
+        return b"", _piper_error or "piper_unavailable"
     try:
         from piper.config import SynthesisConfig
         cfg = SynthesisConfig(
@@ -362,21 +386,49 @@ def _piper_synthesize(text: str) -> tuple[bytes, str | None]:
 #  Публичный API
 # ════════════════════════════════════════════════════════════════════
 def is_available() -> bool:
+    """Доступен хоть какой-то движок? (нужно для /api/tts/status)."""
     eng = _engine()
-    if eng == "qwen3vc":
-        return _get_qwen() is not None
-    if eng == "piper":
-        return _get_piper() is not None
-    return _get_silero() is not None
+    # пробуем выбранный движок, потом фолбэки — лишь бы голос был
+    if eng == "qwen3vc" and _get_qwen() is not None:
+        return True
+    if eng == "piper" and _get_piper() is not None:
+        return True
+    if eng == "silero" and _get_silero() is not None:
+        return True
+    # фолбэк: что-то из остальных
+    return _get_silero() is not None or _get_piper() is not None
 
 
 def synthesize(text: str) -> tuple[bytes, str | None]:
-    """Синтезирует речь → (WAV-байты, ошибка)."""
+    """Синтезирует речь → (WAV-байты, ошибка).
+
+    Цепочка фолбэков: при сбое выбранного движка пробуем следующий, чтобы
+    голос звучал даже если, например, Qwen не влез в GPU.
+    """
     if not text or not text.strip():
         return b"", "empty_text"
     eng = _engine()
+
     if eng == "qwen3vc":
-        return _qwen_synthesize(text)
-    if eng == "piper":
+        audio, err = _qwen_synthesize(text)
+        if not err:
+            return audio, None
+        logger.warning(f"TTS: Qwen упал ({err}), фолбэк → Silero")
+        audio, err2 = _silero_synthesize(text)
+        if not err2:
+            return audio, None
         return _piper_synthesize(text)
-    return _silero_synthesize(text)
+
+    if eng == "piper":
+        audio, err = _piper_synthesize(text)
+        if not err:
+            return audio, None
+        logger.warning(f"TTS: Piper упал ({err}), фолбэк → Silero")
+        return _silero_synthesize(text)
+
+    # silero (по умолчанию)
+    audio, err = _silero_synthesize(text)
+    if not err:
+        return audio, None
+    logger.warning(f"TTS: Silero упал ({err}), фолбэк → Piper")
+    return _piper_synthesize(text)

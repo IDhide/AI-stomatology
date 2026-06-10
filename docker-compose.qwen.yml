@@ -18,6 +18,13 @@
 
 services:
 
+  # Освобождаем GPU под Qwen3-TTS-VC: Ollama работает на CPU.
+  # 1.5B-модель отвечает за ~1.5–3 с на CPU — для киоска приемлемо,
+  # зато весь GPU свободен под клонированный голос.
+  ollama:
+    environment:
+      CUDA_VISIBLE_DEVICES: ""
+
   web:
     build:
       args:
