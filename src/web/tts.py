@@ -4,9 +4,13 @@ tts.py
 Серверный синтез речи (TTS). Отдаёт WAV в браузер.
 
 Движки (выбор через TTS_ENGINE):
-  • qwen3vc — КЛОНИРОВАНИЕ голоса из образца (Qwen3-TTS-VC). Говорит голосом
-              из вашего референс-аудио: живая интонация, ударения, мягкий тембр.
-              Требует GPU (CUDA). Полностью локально (важно для медицины).
+  • xtts    — КЛОНИРОВАНИЕ голоса (Coqui XTTS v2). Лёгкий (467M, ~2 ГБ VRAM),
+              быстрый (на RTX 3060 ×5-10 realtime, на CPU ~1× realtime),
+              русский язык, клонирование из 10-сек референса. Рекомендуется
+              для киоска на 3060/Ryzen 5. Лицензия CPML (non-commercial —
+              уточните у Coqui для коммерческого использования).
+  • qwen3vc — КЛОНИРОВАНИЕ голоса (Qwen3-TTS-VC, 1.7B, ~4 ГБ VRAM). Высокое
+              качество, но тяжёлый и медленный холодный старт. Apache 2.0.
   • silero  — естественный человеческий женский голос (по умолчанию).
               Русские голоса Silero v4 (baya/xenia/kseniya), CPU, локально.
   • piper    — лёгкий запасной движок (ru_RU/irina), если нет torch.
@@ -16,7 +20,12 @@ tts.py
 одинаковый красивый голос в любом браузере.
 
 Переменные окружения:
-  TTS_ENGINE          — qwen3vc | silero | piper (по умолчанию silero)
+  TTS_ENGINE          — xtts | qwen3vc | silero | piper (по умолчанию silero)
+  ── XTTS v2 (клонирование голоса, GPU/CPU) ──
+  XTTS_REF_AUDIO      — путь к образцу голоса (wav, 10–15 с чистой речи)
+  XTTS_DEVICE         — cuda | cpu (по умолчанию: cuda если доступна, иначе cpu)
+  XTTS_LANGUAGE       — язык (по умолчанию ru)
+  XTTS_MODEL_DIR      — куда скачать модель (~1.8 ГБ)
   ── Qwen3-TTS-VC (клонирование голоса, GPU) ──
   QWEN_REF_AUDIO      — путь к образцу голоса (wav/mp3, 10–15 с чистой речи)
   QWEN_REF_TEXT       — точная расшифровка образца (что произнесено в нём)
@@ -48,12 +57,101 @@ from loguru import logger
 
 # Раздельные ошибки на каждый движок — чтобы падение одного не блокировало другие.
 _qwen_error: str | None = None
+_xtts_error: str | None = None
 _silero_error: str | None = None
 _piper_error: str | None = None
 
 
 def _engine() -> str:
     return os.getenv("TTS_ENGINE", "silero").strip().lower()
+
+
+# ════════════════════════════════════════════════════════════════════
+#  XTTS v2 (Coqui) — клонирование голоса из 10-сек референса (GPU/CPU)
+# ════════════════════════════════════════════════════════════════════
+_xtts_model = None
+
+
+def _xtts_device() -> str:
+    explicit = os.getenv("XTTS_DEVICE", "").strip().lower()
+    if explicit:
+        return explicit
+    try:
+        import torch  # type: ignore
+        return "cuda" if torch.cuda.is_available() else "cpu"
+    except Exception:
+        return "cpu"
+
+
+def _get_xtts():
+    """Ленивая загрузка XTTS v2. Voice cloning — без расшифровки, только аудио."""
+    global _xtts_model, _xtts_error
+    if _xtts_model is not None:
+        return _xtts_model
+    if _xtts_error is not None:
+        return None
+
+    ref_audio = os.getenv("XTTS_REF_AUDIO", "").strip()
+    if not ref_audio or not Path(ref_audio).exists():
+        _xtts_error = f"XTTS_REF_AUDIO не найден ({ref_audio or 'не задан'})"
+        logger.error(f"TTS XTTS: {_xtts_error}")
+        return None
+
+    # CPML: первый запуск требует согласия — обходим через env.
+    os.environ.setdefault("COQUI_TOS_AGREED", "1")
+
+    try:
+        from TTS.api import TTS  # type: ignore
+    except Exception as e:
+        _xtts_error = f"coqui-tts не установлен ({e})"
+        logger.warning(f"TTS XTTS недоступен: {_xtts_error}. Установите: pip install coqui-tts")
+        return None
+
+    device = _xtts_device()
+    model_name = os.getenv("XTTS_MODEL", "tts_models/multilingual/multi-dataset/xtts_v2")
+    try:
+        logger.info(f"TTS: загружаю XTTS v2 {model_name} ({device})…")
+        model = TTS(model_name, progress_bar=False)
+        model.to(device)
+        _xtts_model = model
+        logger.success(f"TTS готов (XTTS v2 — клонированный голос, {device})")
+        return _xtts_model
+    except Exception as e:
+        _xtts_error = f"не удалось загрузить XTTS v2 ({e})"
+        logger.error(f"TTS: {_xtts_error}")
+        _free_cuda()
+        return None
+
+
+def _xtts_synthesize(text: str) -> tuple[bytes, str | None]:
+    import numpy as np  # идёт с torch
+    model = _get_xtts()
+    if model is None:
+        return b"", _xtts_error or "xtts_unavailable"
+
+    ref_audio = os.getenv("XTTS_REF_AUDIO", "").strip()
+    language = os.getenv("XTTS_LANGUAGE", "ru").strip() or "ru"
+
+    try:
+        wav = model.tts(text=text, speaker_wav=ref_audio, language=language)
+        wav = np.asarray(wav, dtype="float32")
+        pcm16 = (np.clip(wav, -1.0, 1.0) * 32767).astype("<i2")
+        sr = int(getattr(model.synthesizer.output_sample_rate, "real", 24000)) \
+            if hasattr(model, "synthesizer") else 24000
+        try:
+            sr = int(model.synthesizer.output_sample_rate)
+        except Exception:
+            sr = 24000
+        buf = io.BytesIO()
+        with wave.open(buf, "wb") as wf:
+            wf.setnchannels(1)
+            wf.setsampwidth(2)
+            wf.setframerate(sr)
+            wf.writeframes(pcm16.tobytes())
+        return buf.getvalue(), None
+    except Exception as e:
+        logger.exception("XTTS synthesize error")
+        return b"", f"synth_failed: {e}"
 
 
 # ════════════════════════════════════════════════════════════════════
@@ -388,26 +486,38 @@ def _piper_synthesize(text: str) -> tuple[bytes, str | None]:
 def is_available() -> bool:
     """Доступен хоть какой-то движок? (нужно для /api/tts/status)."""
     eng = _engine()
-    # пробуем выбранный движок, потом фолбэки — лишь бы голос был
+    if eng == "xtts" and _get_xtts() is not None:
+        return True
     if eng == "qwen3vc" and _get_qwen() is not None:
         return True
     if eng == "piper" and _get_piper() is not None:
         return True
     if eng == "silero" and _get_silero() is not None:
         return True
-    # фолбэк: что-то из остальных
+    # фолбэк: лишь бы какой-то голос был
     return _get_silero() is not None or _get_piper() is not None
 
 
 def synthesize(text: str) -> tuple[bytes, str | None]:
     """Синтезирует речь → (WAV-байты, ошибка).
 
-    Цепочка фолбэков: при сбое выбранного движка пробуем следующий, чтобы
-    голос звучал даже если, например, Qwen не влез в GPU.
+    Цепочка фолбэков: при сбое выбранного движка пробуем следующий,
+    чтобы голос звучал даже если, например, клонирующий движок не
+    влез в GPU.
     """
     if not text or not text.strip():
         return b"", "empty_text"
     eng = _engine()
+
+    if eng == "xtts":
+        audio, err = _xtts_synthesize(text)
+        if not err:
+            return audio, None
+        logger.warning(f"TTS: XTTS упал ({err}), фолбэк → Silero")
+        audio, err2 = _silero_synthesize(text)
+        if not err2:
+            return audio, None
+        return _piper_synthesize(text)
 
     if eng == "qwen3vc":
         audio, err = _qwen_synthesize(text)

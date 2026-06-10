@@ -3,7 +3,7 @@
 #  Использование: make <target>
 # ════════════════════════════════════════════════════════════════════
 
-.PHONY: help demo demo-down demo-logs smart smart-down camera smart-camera camera-down webcam smart-webcam webcam-down qwen qwen-down full full-down test lint clean
+.PHONY: help demo demo-down demo-logs smart smart-down camera smart-camera camera-down webcam smart-webcam webcam-down qwen qwen-down xtts xtts-cpu xtts-down full full-xtts full-xtts-cpu full-down test lint clean
 
 COMPOSE_DEMO = docker compose -f docker-compose.demo.yml
 COMPOSE_CAMERA = -f docker-compose.camera.yml
@@ -52,8 +52,23 @@ qwen: ## Умный стенд + клонированный голос (Qwen3-TT
 qwen-down: ## Остановить стенд с клонированным голосом
 	$(COMPOSE_DEMO) -f docker-compose.smart.yml -f docker-compose.qwen.yml down
 
+xtts: ## Умный стенд + клонированный голос XTTS v2 (GPU, лёгкий ~2 ГБ VRAM)
+	$(COMPOSE_DEMO) -f docker-compose.smart.yml -f docker-compose.xtts.yml up --build
+
+xtts-cpu: ## Умный стенд + XTTS v2 на CPU (GPU не нужен, ~1× realtime на Ryzen 5)
+	$(COMPOSE_DEMO) -f docker-compose.smart.yml -f docker-compose.xtts-cpu.yml up --build
+
+xtts-down: ## Остановить стенд с XTTS
+	$(COMPOSE_DEMO) -f docker-compose.smart.yml -f docker-compose.xtts.yml down
+
 full: ## ВСЁ: Ollama + камера (Xiaomi C200) + голос Qwen (GPU) → http://localhost:8080
 	$(COMPOSE_DEMO) -f docker-compose.smart.yml $(COMPOSE_CAMERA) -f docker-compose.qwen.yml up --build
+
+full-xtts: ## ВСЁ с XTTS вместо Qwen (рекомендуется для RTX 3060 + Ryzen 5)
+	$(COMPOSE_DEMO) -f docker-compose.smart.yml $(COMPOSE_CAMERA) -f docker-compose.xtts.yml up --build
+
+full-xtts-cpu: ## ВСЁ с XTTS на CPU (GPU свободен под Ollama или другую модель)
+	$(COMPOSE_DEMO) -f docker-compose.smart.yml $(COMPOSE_CAMERA) -f docker-compose.xtts-cpu.yml up --build
 
 full-down: ## Остановить полный стенд
 	$(COMPOSE_DEMO) -f docker-compose.smart.yml $(COMPOSE_CAMERA) -f docker-compose.qwen.yml down

@@ -60,6 +60,15 @@ RUN if [ "$WITH_TTS" = "1" ] && [ "$TTS_ENGINE" = "qwen3vc" ]; then \
       uv pip install --python .venv/bin/python \
         "torch>=2.1" "numpy>=1.24" "soundfile>=0.12" "qwen-tts"; \
     fi
+# Клонирование голоса (XTTS v2 / Coqui) — лёгкий (467M, ~2 ГБ VRAM), быстрый,
+# работает и на CPU. Лицензия модели CPML (non-commercial).
+RUN if [ "$WITH_TTS" = "1" ] && [ "$TTS_ENGINE" = "xtts" ]; then \
+      apt-get update -q && apt-get install -y --no-install-recommends \
+        sox libsox-fmt-all espeak-ng && \
+      rm -rf /var/lib/apt/lists/* && \
+      uv pip install --python .venv/bin/python \
+        "torch>=2.1" "numpy>=1.24" "soundfile>=0.12" "coqui-tts"; \
+    fi
 
 # Опционально — детекция лиц камерой (OpenCV, ~50 МБ)
 ARG WITH_CAMERA=0
