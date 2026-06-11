@@ -52,6 +52,25 @@
     document.body.classList.toggle("wake-ready", !!visible);
   }
 
+  function setHintText(html) {
+    const el = document.querySelector("#wake-hint .wh-title");
+    if (el) el.innerHTML = html;
+  }
+
+  // активация по касанию экрана (надёжный путь, особенно для Firefox)
+  let _tapHandler = null;
+  function armTapActivation() {
+    disarmTapActivation();
+    _tapHandler = () => { if (state.phase === "passive") activate(""); };
+    document.addEventListener("click", _tapHandler);
+  }
+  function disarmTapActivation() {
+    if (_tapHandler) {
+      document.removeEventListener("click", _tapHandler);
+      _tapHandler = null;
+    }
+  }
+
   // ── русский голос для браузерного TTS (запасной путь) ────
   function pickVoice() {
     const voices = window.speechSynthesis.getVoices() || [];
@@ -349,16 +368,26 @@
     state.phase = "passive";
     setMode("idle");
     setSub("");
-    hudText.textContent = PASSIVE_HUD;
     setHint(true);
-    if (state.inputMode === "sr") wakeLoopSR();
-    else if (state.inputMode === "server") wakeLoopServer();
+    if (state.inputMode === "sr") {
+      // Chrome/Edge: распознавание точное и лёгкое → ждём кодовое слово.
+      hudText.textContent = PASSIVE_HUD;
+      setHintText('Чтобы связаться с администратором,<br/>скажите — <em>«Оливия»</em>');
+      wakeLoopSR();
+    } else {
+      // Firefox/сервер: непрерывный whisper ради wake-слова — нагрузка на CPU
+      // и ненадёжно (мис-слышит «Оливию»). Активируем касанием экрана.
+      hudText.textContent = "КОСНИТЕСЬ ЭКРАНА";
+      setHintText('Коснитесь экрана,<br/>чтобы позвать <em>Оливию</em>');
+      armTapActivation();
+    }
   }
 
   async function activate(firstUtterance) {
     if (state.phase === "active") return;
     state.phase = "active";
     setHint(false);
+    disarmTapActivation();
 
     let greet = "Здравствуйте! Меня зовут Оливия. Чем могу вам помочь?";
     try { greet = (await (await fetch("/api/greeting")).json()).text || greet; } catch (_) {}
@@ -425,6 +454,7 @@
   function stop() {
     state.phase = "off";
     setHint(false);
+    disarmTapActivation();
     try { window.speechSynthesis.cancel(); } catch (_) {}
     try { state.audioEl && state.audioEl.pause(); } catch (_) {}
     try { state.rec && state.rec.stop(); } catch (_) {}
@@ -532,7 +562,28 @@
     state,
   };
 
-  function init() { buildOverlay(); connectCamera(); }
+  // ── часы спящего режима ─────────────────────────────────
+  const MONTHS = ["января", "февраля", "марта", "апреля", "мая", "июня",
+    "июля", "августа", "сентября", "октября", "ноября", "декабря"];
+  const WDAYS = ["воскресенье", "понедельник", "вторник", "среда",
+    "четверг", "пятница", "суббота"];
+  function tickClock() {
+    const t = document.getElementById("clock-time");
+    const d = document.getElementById("clock-date");
+    if (!t || !d) return;
+    const now = new Date();
+    const hh = String(now.getHours()).padStart(2, "0");
+    const mm = String(now.getMinutes()).padStart(2, "0");
+    t.textContent = `${hh}:${mm}`;
+    d.textContent = `${WDAYS[now.getDay()]}, ${now.getDate()} ${MONTHS[now.getMonth()]}`;
+  }
+
+  function init() {
+    buildOverlay();
+    connectCamera();
+    tickClock();
+    setInterval(tickClock, 1000);
+  }
   document.addEventListener("DOMContentLoaded", init);
   if (document.readyState !== "loading") init();
 })();
