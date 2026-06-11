@@ -33,7 +33,8 @@ RUN uv pip install --python .venv/bin/python \
     "pydantic>=2.5" \
     "python-dotenv>=1.0" \
     "aiohttp>=3.9" \
-    "requests>=2.31"
+    "requests>=2.31" \
+    "num2words>=0.5.13"
 
 # Опционально — серверный STT (faster-whisper, модель ~150 МБ–1.5 ГБ в рантайме)
 RUN if [ "$WITH_STT" = "1" ]; then \

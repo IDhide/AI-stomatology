@@ -355,6 +355,28 @@ def _split_for_silero(text: str, limit: int = 900) -> list[str]:
     return parts or [text[:limit]]
 
 
+def _xml_escape(s: str) -> str:
+    return s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+
+def _silero_say(model, text, speaker, sample_rate, rate):
+    """Один вызов Silero. При заданном SILERO_RATE — через SSML (мягче/медленнее
+    для ASMR-подачи), с безопасным откатом на обычный синтез."""
+    if rate:
+        ssml = f'<speak><prosody rate="{rate}">{_xml_escape(text)}</prosody></speak>'
+        try:
+            return model.apply_tts(
+                ssml_text=ssml, speaker=speaker, sample_rate=sample_rate,
+                put_accent=True, put_yo=True,
+            )
+        except Exception:
+            pass  # SSML не поддержан — обычный путь ниже
+    return model.apply_tts(
+        text=text, speaker=speaker, sample_rate=sample_rate,
+        put_accent=True, put_yo=True,
+    )
+
+
 def _silero_synthesize(text: str) -> tuple[bytes, str | None]:
     model = _get_silero()
     if model is None:
@@ -363,17 +385,12 @@ def _silero_synthesize(text: str) -> tuple[bytes, str | None]:
 
     speaker = os.getenv("SILERO_SPEAKER", "baya").strip() or "baya"
     sample_rate = int(os.getenv("SILERO_SAMPLE_RATE", "48000") or 48000)
+    rate = os.getenv("SILERO_RATE", "").strip()  # напр. slow / x-slow / 90%
 
     try:
         chunks = []
         for piece in _split_for_silero(text):
-            audio = model.apply_tts(
-                text=piece,
-                speaker=speaker,
-                sample_rate=sample_rate,
-                put_accent=True,   # автоматическая расстановка ударений
-                put_yo=True,       # ё → правильное произношение
-            )
+            audio = _silero_say(model, piece, speaker, sample_rate, rate)
             chunks.append(audio.numpy())
         wav = np.concatenate(chunks) if len(chunks) > 1 else chunks[0]
         pcm16 = (np.clip(wav, -1.0, 1.0) * 32767).astype("<i2")
@@ -524,6 +541,9 @@ def synthesize(text: str) -> tuple[bytes, str | None]:
     """
     if not text or not text.strip():
         return b"", "empty_text"
+    # числа/деньги/время/сокращения → произносимые слова (для всех движков)
+    from .text_norm import normalize_ru
+    text = normalize_ru(text)
     eng = _engine()
 
     if eng == "xtts":

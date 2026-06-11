@@ -92,10 +92,13 @@ services:
       STT_MODEL: "${STT_MODEL:-small}"
       # ── Голос Оливии (Silero — живой женский) ──
       TTS_ENGINE: "${TTS_ENGINE:-silero}"
-      # xenia — самый естественный/чистый женский из Silero v4.
-      # Альтернативы: baya (тёплый), kseniya (мягкий).
-      SILERO_SPEAKER: "${SILERO_SPEAKER:-xenia}"
+      # baya — тёплый/интимный (ASMR-подача). Альтернативы:
+      # xenia (чистый/нейтральный), kseniya (мягкий).
+      SILERO_SPEAKER: "${SILERO_SPEAKER:-baya}"
       SILERO_SAMPLE_RATE: "${SILERO_SAMPLE_RATE:-48000}"
+      # Темп речи для ASMR-подачи (через SSML). Пусто = обычный.
+      # Мягче/медленнее: slow | x-slow | 90%
+      SILERO_RATE: "${SILERO_RATE:-}"
       SILERO_MODEL_DIR: "/app/models/silero"
       PIPER_VOICE_DIR: "/app/models/piper"
       PYTHONUNBUFFERED: "1"
