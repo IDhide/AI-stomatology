@@ -1,0 +1,69 @@
+# ════════════════════════════════════════════════════════════════════
+#  Smile.AI — Fish Speech на CPU (без GPU)
+#
+#  Тот же живой голос, но синтез на CPU. Заметно медленнее, чем на GPU
+#  (несколько секунд на реплику) — годится для проверки/демо без видеокарты.
+#  Если есть GPU — используйте `make fish` (намного быстрее).
+#
+#  Запуск:  make fish-cpu
+# ════════════════════════════════════════════════════════════════════
+
+services:
+
+  # ── Сервер Fish Speech на CPU (без блока deploy.resources) ────────
+  fish-speech:
+    image: fishaudio/fish-speech:latest
+    container_name: smile-fish
+    environment:
+      HF_HOME: "/opt/fish-speech/checkpoints/hf"
+    entrypoint: ["/bin/bash", "-c"]
+    command:
+      - |
+        set -e
+        CKPT=/opt/fish-speech/checkpoints/openaudio-s1-mini
+        if [ ! -f "$$CKPT/codec.pth" ]; then
+          echo "Fish Speech: качаю веса OpenAudio S1-mini (~1 ГБ, разово)…"
+          huggingface-cli download fishaudio/openaudio-s1-mini --local-dir "$$CKPT"
+        fi
+        echo "Fish Speech: запускаю сервер синтеза на 0.0.0.0:8080 (cpu)…"
+        # GPU контейнеру не отдан → torch автоматически выберет cpu.
+        exec python -m tools.api_server \
+          --listen 0.0.0.0:8080 \
+          --llama-checkpoint-path "$$CKPT" \
+          --decoder-checkpoint-path "$$CKPT/codec.pth" \
+          --decoder-config-name modded_dac_vq
+    volumes:
+      - fish_models:/opt/fish-speech/checkpoints
+    ports:
+      - "8081:8080"
+    healthcheck:
+      test: ["CMD", "python", "-c",
+             "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8080/v1/health',timeout=5).status==200 else 1)"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 900s   # на CPU прогрев дольше
+    restart: unless-stopped
+
+  # ── Веб-киоск: голос через сервер Fish Speech ────────────────────
+  web:
+    build:
+      args:
+        WITH_TTS: "1"
+        TTS_ENGINE: "fishaudio"
+    environment:
+      TTS_ENGINE: "fishaudio"
+      FISH_API_URL: "http://fish-speech:8080"
+      FISH_REF_AUDIO: "${FISH_REF_AUDIO:-/app/assets/voice/reference.mp3}"
+      FISH_REF_TEXT_FILE: "${FISH_REF_TEXT_FILE:-/app/assets/voice/reference.txt}"
+      FISH_TEMPERATURE: "${FISH_TEMPERATURE:-0.7}"
+      FISH_TOP_P: "${FISH_TOP_P:-0.7}"
+      FISH_REP_PENALTY: "${FISH_REP_PENALTY:-1.2}"
+      FISH_TIMEOUT: "${FISH_TIMEOUT:-120}"
+    depends_on:
+      fish-speech:
+        condition: service_healthy
+
+volumes:
+  fish_models:
+    driver: local

@@ -3,7 +3,7 @@
 #  Использование: make <target>
 # ════════════════════════════════════════════════════════════════════
 
-.PHONY: help demo demo-down demo-logs smart smart-down camera smart-camera camera-down webcam smart-webcam webcam-down qwen qwen-down xtts xtts-cpu xtts-down kiosk kiosk-cpu kiosk-down full full-xtts full-xtts-cpu full-webcam full-webcam-cpu full-webcam-down full-down test lint clean
+.PHONY: help demo demo-down demo-logs smart smart-down camera smart-camera camera-down webcam smart-webcam webcam-down qwen qwen-down fish fish-cpu fish-down xtts xtts-cpu xtts-down kiosk kiosk-cpu kiosk-down full full-xtts full-xtts-cpu full-webcam full-webcam-cpu full-webcam-down full-down test lint clean
 
 COMPOSE_DEMO = docker compose -f docker-compose.demo.yml
 COMPOSE_CAMERA = -f docker-compose.camera.yml
@@ -51,6 +51,15 @@ qwen: ## Умный стенд + клонированный голос (Qwen3-TT
 
 qwen-down: ## Остановить стенд с клонированным голосом
 	$(COMPOSE_DEMO) -f docker-compose.smart.yml -f docker-compose.qwen.yml down
+
+fish: ## Умный стенд + ЖИВОЙ голос Fish Speech (GPU, лучшее качество, assets/voice)
+	$(COMPOSE_DEMO) -f docker-compose.smart.yml -f docker-compose.fish.yml up --build
+
+fish-cpu: ## Fish Speech на CPU (GPU не нужен, но медленнее)
+	$(COMPOSE_DEMO) -f docker-compose.smart.yml -f docker-compose.fish-cpu.yml up --build
+
+fish-down: ## Остановить стенд с Fish Speech
+	$(COMPOSE_DEMO) -f docker-compose.smart.yml -f docker-compose.fish.yml down
 
 xtts: ## Умный стенд + клонированный голос XTTS v2 (GPU, лёгкий ~2 ГБ VRAM)
 	$(COMPOSE_DEMO) -f docker-compose.smart.yml -f docker-compose.xtts.yml up --build

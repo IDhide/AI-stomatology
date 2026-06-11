@@ -4,6 +4,11 @@ tts.py
 Серверный синтез речи (TTS). Отдаёт WAV в браузер.
 
 Движки (выбор через TTS_ENGINE):
+  • fishaudio — КЛОНИРОВАНИЕ голоса (Fish Speech / OpenAudio S1, open-source).
+              Очень живой, эмоциональный голос, отличный русский. Работает
+              отдельным локальным сервером (без облака и API-ключей), web
+              обращается к нему по HTTP. Лучшее качество; рекомендуется GPU
+              (~4 ГБ VRAM), на CPU работает, но медленно. Лицензия Apache 2.0.
   • xtts    — КЛОНИРОВАНИЕ голоса (Coqui XTTS v2). Лёгкий (467M, ~2 ГБ VRAM),
               быстрый (на RTX 3060 ×5-10 realtime, на CPU ~1× realtime),
               русский язык, клонирование из 10-сек референса. Рекомендуется
@@ -20,7 +25,18 @@ tts.py
 одинаковый красивый голос в любом браузере.
 
 Переменные окружения:
-  TTS_ENGINE          — xtts | qwen3vc | silero | piper (по умолчанию silero)
+  TTS_ENGINE          — fishaudio | xtts | qwen3vc | silero | piper
+                        (по умолчанию silero)
+  ── Fish Speech / OpenAudio (клонирование голоса, локальный сервер) ──
+  FISH_API_URL        — адрес локального сервера Fish Speech
+                        (по умолчанию http://fish-speech:8080)
+  FISH_REF_AUDIO      — путь к образцу голоса (wav/mp3, 10–15 с чистой речи)
+  FISH_REF_TEXT       — точная расшифровка образца (что произнесено в нём)
+  FISH_REF_TEXT_FILE  — либо файл с расшифровкой (альтернатива FISH_REF_TEXT)
+  FISH_TEMPERATURE    — «живость»/вариативность (по умолчанию 0.7)
+  FISH_TOP_P          — отсечение по вероятности (по умолчанию 0.7)
+  FISH_REP_PENALTY    — штраф за повторы (по умолчанию 1.2)
+  FISH_TIMEOUT        — таймаут запроса к серверу, сек (по умолчанию 60)
   ── XTTS v2 (клонирование голоса, GPU/CPU) ──
   XTTS_REF_AUDIO      — путь к образцу голоса (wav, 10–15 с чистой речи)
   XTTS_DEVICE         — cuda | cpu (по умолчанию: cuda если доступна, иначе cpu)
@@ -56,6 +72,7 @@ from pathlib import Path
 from loguru import logger
 
 # Раздельные ошибки на каждый движок — чтобы падение одного не блокировало другие.
+_fish_error: str | None = None
 _qwen_error: str | None = None
 _xtts_error: str | None = None
 _silero_error: str | None = None
@@ -64,6 +81,107 @@ _piper_error: str | None = None
 
 def _engine() -> str:
     return os.getenv("TTS_ENGINE", "silero").strip().lower()
+
+
+# ════════════════════════════════════════════════════════════════════
+#  Fish Speech / OpenAudio S1 — клонирование голоса (локальный сервер)
+# ════════════════════════════════════════════════════════════════════
+#  Тяжёлая модель крутится отдельным контейнером (как Ollama), а web
+#  обращается к ней по HTTP — образ киоска остаётся лёгким. Полностью
+#  локально: ни облака, ни API-ключей.
+_fish_ref_cache: tuple[bytes, str] | None = None
+
+
+def _fish_api_url() -> str:
+    return os.getenv("FISH_API_URL", "http://fish-speech:8080").rstrip("/")
+
+
+def _fish_reference() -> tuple[bytes | None, str]:
+    """Образец голоса (байты аудио + расшифровка) для клонирования.
+
+    Читаем один раз и кэшируем — файл на каждый запрос дёргать незачем.
+    Если образца нет — вернём (None, ""), Fish озвучит дефолтным голосом.
+    """
+    global _fish_ref_cache
+    if _fish_ref_cache is not None:
+        return _fish_ref_cache
+
+    audio_path = os.getenv("FISH_REF_AUDIO", "").strip()
+    ref_text = os.getenv("FISH_REF_TEXT", "").strip()
+    if not ref_text:
+        f = os.getenv("FISH_REF_TEXT_FILE", "").strip()
+        if f and Path(f).exists():
+            ref_text = Path(f).read_text(encoding="utf-8").strip()
+
+    if audio_path and Path(audio_path).exists():
+        try:
+            data = Path(audio_path).read_bytes()
+            _fish_ref_cache = (data, ref_text)
+            logger.info(f"Fish Speech: образец голоса загружен ({len(data) // 1024} КБ)")
+            return _fish_ref_cache
+        except Exception as e:
+            logger.warning(f"Fish Speech: не удалось прочитать образец {audio_path}: {e}")
+    return None, ""
+
+
+def _fish_health() -> bool:
+    """Доступен ли сервер Fish Speech (короткий пинг /v1/health)."""
+    global _fish_error
+    try:
+        import requests  # type: ignore
+    except Exception as e:
+        _fish_error = f"requests не установлен ({e})"
+        return False
+    try:
+        r = requests.get(f"{_fish_api_url()}/v1/health", timeout=3)
+        if r.ok:
+            _fish_error = None
+            return True
+        _fish_error = f"сервер вернул HTTP {r.status_code}"
+        return False
+    except Exception as e:
+        _fish_error = f"сервер недоступен по {_fish_api_url()} ({e})"
+        return False
+
+
+def _fishaudio_synthesize(text: str) -> tuple[bytes, str | None]:
+    try:
+        import ormsgpack  # type: ignore
+        import requests  # type: ignore
+    except Exception as e:
+        return b"", f"ormsgpack/requests не установлены ({e})"
+
+    audio, ref_text = _fish_reference()
+    req: dict = {
+        "text": text,
+        "format": "wav",
+        "references": [],
+        "chunk_length": int(os.getenv("FISH_CHUNK_LENGTH", "200") or 200),
+        "top_p": float(os.getenv("FISH_TOP_P", "0.7") or 0.7),
+        "repetition_penalty": float(os.getenv("FISH_REP_PENALTY", "1.2") or 1.2),
+        "temperature": float(os.getenv("FISH_TEMPERATURE", "0.7") or 0.7),
+        "max_new_tokens": int(os.getenv("FISH_MAX_TOKENS", "1024") or 1024),
+        "streaming": False,
+        "use_memory_cache": "on",
+    }
+    # Клонирование голоса из образца (если он есть)
+    if audio is not None:
+        req["references"] = [{"audio": audio, "text": ref_text}]
+
+    try:
+        resp = requests.post(
+            f"{_fish_api_url()}/v1/tts",
+            data=ormsgpack.packb(req),
+            headers={"content-type": "application/msgpack"},
+            timeout=float(os.getenv("FISH_TIMEOUT", "60") or 60),
+        )
+        resp.raise_for_status()
+        if not resp.content:
+            return b"", "сервер вернул пустой ответ"
+        return resp.content, None
+    except Exception as e:
+        logger.exception("Fish Speech synthesize error")
+        return b"", f"synth_failed: {e}"
 
 
 # ════════════════════════════════════════════════════════════════════
@@ -503,12 +621,14 @@ def engine_info() -> dict:
     return {
         "engine": _engine(),
         "loaded": {
+            "fishaudio": _fish_error is None and _engine() == "fishaudio",
             "xtts": _xtts_model is not None,
             "qwen3vc": _qwen_model is not None,
             "silero": _silero_model is not None,
             "piper": _piper_voice is not None,
         },
         "errors": {
+            "fishaudio": _fish_error,
             "xtts": _xtts_error,
             "qwen3vc": _qwen_error,
             "silero": _silero_error,
@@ -520,6 +640,8 @@ def engine_info() -> dict:
 def is_available() -> bool:
     """Доступен хоть какой-то движок? (нужно для /api/tts/status)."""
     eng = _engine()
+    if eng == "fishaudio" and _fish_health():
+        return True
     if eng == "xtts" and _get_xtts() is not None:
         return True
     if eng == "qwen3vc" and _get_qwen() is not None:
@@ -545,6 +667,16 @@ def synthesize(text: str) -> tuple[bytes, str | None]:
     from .text_norm import normalize_ru
     text = normalize_ru(text)
     eng = _engine()
+
+    if eng == "fishaudio":
+        audio, err = _fishaudio_synthesize(text)
+        if not err:
+            return audio, None
+        logger.warning(f"TTS: Fish Speech упал ({err}), фолбэк → Silero")
+        audio, err2 = _silero_synthesize(text)
+        if not err2:
+            return audio, None
+        return _piper_synthesize(text)
 
     if eng == "xtts":
         audio, err = _xtts_synthesize(text)

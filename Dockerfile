@@ -34,7 +34,8 @@ RUN uv pip install --python .venv/bin/python \
     "python-dotenv>=1.0" \
     "aiohttp>=3.9" \
     "requests>=2.31" \
-    "num2words>=0.5.13"
+    "num2words>=0.5.13" \
+    "ormsgpack>=1.5.0"
 
 # Опционально — серверный STT (faster-whisper, модель ~150 МБ–1.5 ГБ в рантайме)
 RUN if [ "$WITH_STT" = "1" ]; then \
@@ -44,8 +45,10 @@ RUN if [ "$WITH_STT" = "1" ]; then \
 # Опционально — серверный TTS. По умолчанию Silero (живой женский голос,
 # нужен torch CPU ~800 МБ). Для лёгкого запасного движка Piper укажите
 # --build-arg TTS_ENGINE=piper.
+# Для fishaudio тоже ставим Silero+torch — он работает локальным фолбэком,
+# если контейнер Fish Speech ещё прогревается или недоступен.
 ARG TTS_ENGINE=silero
-RUN if [ "$WITH_TTS" = "1" ] && [ "$TTS_ENGINE" = "silero" ]; then \
+RUN if [ "$WITH_TTS" = "1" ] && { [ "$TTS_ENGINE" = "silero" ] || [ "$TTS_ENGINE" = "fishaudio" ]; }; then \
       uv pip install --python .venv/bin/python \
         --extra-index-url https://download.pytorch.org/whl/cpu \
         "torch>=2.1" "numpy>=1.24"; \

@@ -1,4 +1,4 @@
-# Образец голоса для клонирования (Qwen3-TTS-VC)
+# Образец голоса для клонирования (Fish Speech / XTTS / Qwen3-TTS-VC)
 
 Сюда кладётся образец голоса, которым будет говорить Оливия.
 
@@ -25,5 +25,11 @@
 ## Запуск
 
 ```bash
-make qwen
+make fish       # живой голос Fish Speech / OpenAudio (лучшее качество, GPU)
+make fish-cpu   # то же без GPU (медленнее)
+make xtts       # лёгкое клонирование XTTS v2
+make qwen       # Qwen3-TTS-VC
 ```
+
+> Fish Speech и XTTS принимают и `reference.mp3`, и `reference.wav`.
+> Для Qwen нужен именно `reference.wav` + расшифровка в `reference.txt`.
