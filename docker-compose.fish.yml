@@ -42,11 +42,10 @@ services:
         CKPT=/opt/fish-speech/checkpoints/openaudio-s1-mini
         if [ ! -f "$$CKPT/codec.pth" ]; then
           echo "Fish Speech: качаю веса OpenAudio S1-mini (~1 ГБ, разово)…"
-          python -c "from huggingface_hub import snapshot_download; snapshot_download('fishaudio/openaudio-s1-mini', local_dir='$$CKPT')"
+          python3 -c "from huggingface_hub import snapshot_download; snapshot_download('fishaudio/openaudio-s1-mini', local_dir='$$CKPT')"
         fi
         echo "Fish Speech: запускаю сервер синтеза на 0.0.0.0:8080…"
-        # device определяется автоматически: cuda при наличии GPU, иначе cpu.
-        exec python -m tools.api_server \
+        exec python3 -m tools.api_server \
           --listen 0.0.0.0:8080 \
           --llama-checkpoint-path "$$CKPT" \
           --decoder-checkpoint-path "$$CKPT/codec.pth" \
@@ -56,7 +55,7 @@ services:
     ports:
       - "8081:8080"   # наружу, чтобы можно было дёрнуть сервер напрямую
     healthcheck:
-      test: ["CMD", "python", "-c",
+      test: ["CMD", "python3", "-c",
              "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8080/v1/health',timeout=5).status==200 else 1)"]
       interval: 15s
       timeout: 10s
