@@ -266,6 +266,41 @@ body[data-mode="thinking"]  #hud-dot { background: #f2a13c; box-shadow: 0 0 10px
 }
 #text-input-bar button:hover { background: var(--violet-bright); }
 
+/* ── Подсказка «скажите Оливия» (на заставке) ───────────── */
+#wake-hint {
+  position: fixed;
+  left: 50%;
+  bottom: 9vh;
+  transform: translateX(-50%);
+  z-index: 2;
+  text-align: center;
+  opacity: 0;
+  transition: opacity 1.2s ease;
+  pointer-events: none;
+}
+#wake-hint .wh-title {
+  font-size: clamp(24px, 3.6vmin, 52px);
+  font-weight: 500;
+  line-height: 1.45;
+  color: rgba(234, 242, 255, 0.92);
+  text-shadow: 0 2px 24px rgba(5, 6, 13, 0.8);
+}
+#wake-hint em {
+  font-style: normal;
+  font-weight: 700;
+  color: var(--violet-bright);
+  text-shadow: 0 0 24px var(--violet-glow);
+}
+/* видна только на заставке (idle) и только когда киоск слушает кодовое слово */
+body.wake-ready[data-mode="idle"] #wake-hint {
+  opacity: 1;
+  animation: whbreathe 3.6s ease-in-out infinite;
+}
+@keyframes whbreathe {
+  0%, 100% { transform: translateX(-50%) scale(1); }
+  50%      { transform: translateX(-50%) scale(1.025); }
+}
+
 /* ── Индикатор камеры (правый верхний угол) ─────────────── */
 #cam-badge {
   position: fixed;

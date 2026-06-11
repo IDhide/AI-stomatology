@@ -3,7 +3,7 @@
 #  Использование: make <target>
 # ════════════════════════════════════════════════════════════════════
 
-.PHONY: help demo demo-down demo-logs smart smart-down camera smart-camera camera-down webcam smart-webcam webcam-down qwen qwen-down xtts xtts-cpu xtts-down full full-xtts full-xtts-cpu full-down test lint clean
+.PHONY: help demo demo-down demo-logs smart smart-down camera smart-camera camera-down webcam smart-webcam webcam-down qwen qwen-down xtts xtts-cpu xtts-down kiosk kiosk-cpu kiosk-down full full-xtts full-xtts-cpu full-webcam full-webcam-cpu full-webcam-down full-down test lint clean
 
 COMPOSE_DEMO = docker compose -f docker-compose.demo.yml
 COMPOSE_CAMERA = -f docker-compose.camera.yml
@@ -59,6 +59,15 @@ xtts-cpu: ## Умный стенд + XTTS v2 на CPU (GPU не нужен, ~1×
 	$(COMPOSE_DEMO) -f docker-compose.smart.yml -f docker-compose.xtts-cpu.yml up --build
 
 xtts-down: ## Остановить стенд с XTTS
+	$(COMPOSE_DEMO) -f docker-compose.smart.yml -f docker-compose.xtts.yml down
+
+kiosk: ## КИОСК (рекомендуется): Ollama + голос XTTS + активация словом «Оливия», без камер
+	$(COMPOSE_DEMO) -f docker-compose.smart.yml -f docker-compose.xtts.yml up --build
+
+kiosk-cpu: ## Киоск с XTTS на CPU (GPU не нужен)
+	$(COMPOSE_DEMO) -f docker-compose.smart.yml -f docker-compose.xtts-cpu.yml up --build
+
+kiosk-down: ## Остановить киоск
 	$(COMPOSE_DEMO) -f docker-compose.smart.yml -f docker-compose.xtts.yml down
 
 full: ## ВСЁ: Ollama + камера (Xiaomi C200) + голос Qwen (GPU) → http://localhost:8080

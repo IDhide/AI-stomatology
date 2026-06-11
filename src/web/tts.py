@@ -118,7 +118,7 @@ def _get_xtts():
         return _xtts_model
     except Exception as e:
         _xtts_error = f"не удалось загрузить XTTS v2 ({e})"
-        logger.error(f"TTS: {_xtts_error}")
+        logger.exception(f"TTS: {_xtts_error}")
         _free_cuda()
         return None
 
@@ -136,8 +136,6 @@ def _xtts_synthesize(text: str) -> tuple[bytes, str | None]:
         wav = model.tts(text=text, speaker_wav=ref_audio, language=language)
         wav = np.asarray(wav, dtype="float32")
         pcm16 = (np.clip(wav, -1.0, 1.0) * 32767).astype("<i2")
-        sr = int(getattr(model.synthesizer.output_sample_rate, "real", 24000)) \
-            if hasattr(model, "synthesizer") else 24000
         try:
             sr = int(model.synthesizer.output_sample_rate)
         except Exception:
@@ -483,6 +481,25 @@ def _piper_synthesize(text: str) -> tuple[bytes, str | None]:
 # ════════════════════════════════════════════════════════════════════
 #  Публичный API
 # ════════════════════════════════════════════════════════════════════
+def engine_info() -> dict:
+    """Диагностика: какой движок выбран, что загружено, какие ошибки."""
+    return {
+        "engine": _engine(),
+        "loaded": {
+            "xtts": _xtts_model is not None,
+            "qwen3vc": _qwen_model is not None,
+            "silero": _silero_model is not None,
+            "piper": _piper_voice is not None,
+        },
+        "errors": {
+            "xtts": _xtts_error,
+            "qwen3vc": _qwen_error,
+            "silero": _silero_error,
+            "piper": _piper_error,
+        },
+    }
+
+
 def is_available() -> bool:
     """Доступен хоть какой-то движок? (нужно для /api/tts/status)."""
     eng = _engine()

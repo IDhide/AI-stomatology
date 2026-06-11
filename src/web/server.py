@@ -369,10 +369,11 @@ async def api_tts(request: web.Request) -> web.Response:
 
 
 async def api_tts_status(request: web.Request) -> web.Response:
-    """Проверка: доступен ли серверный TTS (чтобы клиент решил, использовать его)."""
+    """Проверка + диагностика серверного TTS (движок, ошибки загрузки)."""
     from . import tts
     available = await asyncio.to_thread(tts.is_available)
-    return web.json_response({"available": bool(available)})
+    info = tts.engine_info()
+    return web.json_response({"available": bool(available), **info})
 
 
 async def api_stt_status(request: web.Request) -> web.Response:
@@ -476,6 +477,25 @@ def build_app(auto_loop: bool = True) -> web.Application:
     async def on_start(app: web.Application) -> None:
         if app["auto_loop"]:
             app["loop_task"] = asyncio.create_task(scenario.auto_loop())
+
+        # ── Прогрев TTS в фоне ──
+        # Клонирующие модели (XTTS ~1.8 ГБ) скачиваются/грузятся минуты.
+        # Без прогрева первый запрос голоса упирается в таймаут браузера и
+        # кажется, что «голос не работает». Греем при старте — к первому
+        # пациенту модель уже в памяти. Ошибки загрузки видны сразу в логах.
+        def _warm_tts() -> None:
+            try:
+                from . import tts
+                ok = tts.is_available()
+                info = tts.engine_info()
+                if ok:
+                    logger.success(f"TTS прогрет: engine={info['engine']}, loaded={info['loaded']}")
+                else:
+                    logger.error(f"TTS недоступен: errors={info['errors']}")
+            except Exception:
+                logger.exception("TTS warmup error")
+
+        app["tts_warmup"] = asyncio.create_task(asyncio.to_thread(_warm_tts))
 
         # ── Серверная камера (RTSP / USB) ──
         # Если задан CAMERA_SOURCE — запускаем фоновый детектор.

@@ -1,12 +1,20 @@
 /* ============================================================
-   voice.js — голосовой режим Оливии в браузере
-   Три пути ввода (выбирается автоматически):
-     1) Chrome/Edge — Web Speech API (SpeechRecognition), распознавание в браузере
-     2) Firefox и др. — MediaRecorder → POST /api/stt (распознавание на сервере)
-     3) Если сервер-STT недоступен — строка ввода текстом (Оливия отвечает голосом)
+   voice.js — голосовой режим Оливии (активация по кодовому слову)
 
-   Везде Оливия отвечает голосом через speechSynthesis (TTS).
-   Цикл: приветствие → СЛУШАЮ → ДУМАЮ → ГОВОРЮ → снова СЛУШАЮ. Esc — стоп.
+   Работает как «Алиса»: киоск молча показывает заставку с медузами
+   и подсказку. Пациент говорит «Оливия» → она здоровается и слушает.
+   Никаких авто-приветствий по камере — ничего не раздражает.
+
+   Фазы:
+     off     — до первого касания экрана (жест нужен браузеру для микрофона)
+     passive — ждём кодовое слово «Оливия» (фоновое распознавание)
+     active  — диалог: СЛУШАЮ → ДУМАЮ → ГОВОРЮ → снова СЛУШАЮ
+
+   Возврат в passive: пациент прощается, либо 3 «пустых» прослушивания
+   подряд (ушёл/молчит), либо Esc.
+
+   Пути ввода (автовыбор): Web Speech API (Chrome/Edge) → серверный STT
+   (Firefox, MediaRecorder → /api/stt) → текстовая строка.
    ============================================================ */
 
 (() => {
@@ -22,17 +30,29 @@
   const setMode = (m) => ui() && ui().setMode(m);
   const setSub = (t, who) => ui() && ui().setSubtitle(t, who);
 
+  // кодовое слово: «Оливия» + частые ослышки распознавалок
+  const WAKE_RE = /(оливи|аливи|ол[ие]вь|olivia|oliwia)/i;
+  // прощание → вернуться к заставке
+  const BYE_RE = /(до свидани|всего доброго|всего хорошего|спасибо,? (это )?(всё|все)|больше ничего|это всё|это все|пока,? оливия)/i;
+
+  const PASSIVE_HUD = "СКАЖИТЕ «ОЛИВИЯ»";
+  const SILENCE_LIMIT = 3;   // пустых прослушиваний подряд → заставка
+
   const state = {
-    active: false,
+    phase: "off",          // off | passive | active
     speaking: false,
     ruVoice: null,
     rec: null,
     inputMode: "none",     // sr | server | text
-    serverTTS: null,       // true | false (определяется при старте)
-    audioEl: null,         // <audio> для воспроизведения серверного TTS
+    serverTTS: null,
+    audioEl: null,
   };
 
-  // ── русский голос для TTS ───────────────────────────────
+  function setHint(visible) {
+    document.body.classList.toggle("wake-ready", !!visible);
+  }
+
+  // ── русский голос для браузерного TTS (запасной путь) ────
   function pickVoice() {
     const voices = window.speechSynthesis.getVoices() || [];
     state.ruVoice =
@@ -41,7 +61,7 @@
       voices.find((v) => /russian|русск/i.test(v.name)) || null;
   }
 
-  // ── TTS: серверный Piper, фолбэк — speechSynthesis браузера ──
+  // ── TTS: серверный (XTTS/Silero), фолбэк — браузерный ────
   function speak(text) {
     return new Promise((resolve) => {
       if (!text) return resolve();
@@ -50,12 +70,10 @@
       state.speaking = true;
 
       const done = () => { state.speaking = false; resolve(); };
-      // подстраховка: гарантированно вернуть управление
       const safety = setTimeout(done,
-        Math.min(20000, 380 * text.split(/\s+/).length + 2000));
+        Math.min(30000, 380 * text.split(/\s+/).length + 4000));
 
       if (state.serverTTS) {
-        // серверный Piper: качаем WAV и проигрываем
         const url = "/api/tts?text=" + encodeURIComponent(text);
         try { state.audioEl && state.audioEl.pause(); } catch (_) {}
         const a = new Audio(url);
@@ -91,9 +109,7 @@
     });
   }
 
-  // ── общий шаг: отправить текст пациента → ответ голосом ──
-  // Возвращает true, если Оливия ответила; false — если реплику проигнорировали
-  // (нерелевантная/фоновая речь — тогда молчим и продолжаем слушать).
+  // ── общий шаг: текст пациента → ответ Оливии голосом ─────
   async function respondTo(said) {
     if (!said) return false;
     setMode("thinking");
@@ -110,7 +126,6 @@
       data = { reply: "Извините, связь прервалась. Повторите, пожалуйста?" };
     }
     if (data.ignored || !data.reply) {
-      // нерелевантная речь — не показываем её и молчим
       setSub("", "user");
       return false;
     }
@@ -120,7 +135,7 @@
   }
 
   // ════════════════════════════════════════════════════════
-  //  Путь 1: Web Speech API (Chrome/Edge)
+  //  Прослушивание: Web Speech API (Chrome/Edge)
   // ════════════════════════════════════════════════════════
   function listenSR() {
     return new Promise((resolve) => {
@@ -146,7 +161,7 @@
       };
       rec.onerror = (e) => {
         if (e.error === "not-allowed" || e.error === "service-not-allowed") {
-          hudText.textContent = "НЕТ ДОСТУПА К МИКРОФОНУ"; state.active = false;
+          hudText.textContent = "НЕТ ДОСТУПА К МИКРОФОНУ"; state.phase = "off";
         }
         finish(finalText);
       };
@@ -155,8 +170,42 @@
     });
   }
 
+  // ── фоновое ожидание кодового слова (Chrome/Edge) ─────────
+  function wakeLoopSR() {
+    if (state.phase !== "passive") return;
+    const rec = new SR();
+    state.rec = rec;
+    rec.lang = "ru-RU";
+    rec.continuous = true;
+    rec.interimResults = true;
+    let woke = false, tailText = "";
+    rec.onresult = (e) => {
+      let txt = "";
+      for (let i = e.resultIndex; i < e.results.length; i++)
+        txt += e.results[i][0].transcript;
+      if (WAKE_RE.test(txt)) {
+        woke = true;
+        // если сказали «Оливия, сколько стоят виниры» — хвост станет первым вопросом
+        tailText = txt.split(WAKE_RE).pop().replace(/^[\s,!.…-]+/, "").trim();
+        try { rec.stop(); } catch (_) {}
+      }
+    };
+    rec.onerror = (e) => {
+      if (e.error === "not-allowed" || e.error === "service-not-allowed") {
+        state.phase = "off";
+        hudText.textContent = "НЕТ ДОСТУПА К МИКРОФОНУ";
+      }
+    };
+    rec.onend = () => {
+      if (state.phase !== "passive") return;
+      if (woke) activate(tailText);
+      else setTimeout(wakeLoopSR, 300);  // Chrome сам глушит сессию — перезапуск
+    };
+    try { rec.start(); } catch (_) { setTimeout(wakeLoopSR, 1500); }
+  }
+
   // ════════════════════════════════════════════════════════
-  //  Путь 2: MediaRecorder → сервер (Firefox)
+  //  Прослушивание: MediaRecorder → сервер (Firefox)
   // ════════════════════════════════════════════════════════
   async function recordUntilSilence(maxMs = 8000, silenceMs = 1200) {
     const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
@@ -169,7 +218,6 @@
     const chunks = [];
     mr.ondataavailable = (e) => { if (e.data && e.data.size) chunks.push(e.data); };
 
-    // VAD на Web Audio: ждём тишину silenceMs после речи
     const ac = new (window.AudioContext || window.webkitAudioContext)();
     const srcNode = ac.createMediaStreamSource(stream);
     const an = ac.createAnalyser(); an.fftSize = 2048;
@@ -203,25 +251,12 @@
     });
   }
 
-  async function listenServer() {
-    setMode("listening");
-    hudText.textContent = "LISTENING 🎤";
-    let rec;
-    try {
-      rec = await recordUntilSilence();
-    } catch (e) {
-      hudText.textContent = "НЕТ ДОСТУПА К МИКРОФОНУ";
-      state.active = false;
-      return { text: "", unavailable: true };
-    }
-    if (!rec.heardVoice || rec.blob.size < 1200) return { text: "" };
-    setMode("thinking");
-    hudText.textContent = "РАСПОЗНАЮ…";
+  async function sttRequest(blob) {
     try {
       const r = await fetch("/api/stt", {
         method: "POST",
-        headers: { "Content-Type": rec.blob.type || "audio/webm" },
-        body: rec.blob,
+        headers: { "Content-Type": blob.type || "audio/webm" },
+        body: blob,
       });
       if (r.status === 503) return { text: "", unavailable: true };
       return { text: ((await r.json()).text || "").trim() };
@@ -230,12 +265,58 @@
     }
   }
 
+  async function listenServer() {
+    setMode("listening");
+    hudText.textContent = "LISTENING 🎤";
+    let rec;
+    try {
+      rec = await recordUntilSilence();
+    } catch (e) {
+      hudText.textContent = "НЕТ ДОСТУПА К МИКРОФОНУ";
+      state.phase = "off";
+      return { text: "", unavailable: true };
+    }
+    if (!rec.heardVoice || rec.blob.size < 1200) return { text: "" };
+    setMode("thinking");
+    hudText.textContent = "РАСПОЗНАЮ…";
+    return await sttRequest(rec.blob);
+  }
+
+  // ── фоновое ожидание кодового слова (Firefox / сервер) ────
+  async function wakeLoopServer() {
+    while (state.phase === "passive") {
+      let rec;
+      try {
+        rec = await recordUntilSilence(5000, 900);
+      } catch (_) {
+        state.phase = "off";
+        hudText.textContent = "НЕТ ДОСТУПА К МИКРОФОНУ";
+        return;
+      }
+      if (state.phase !== "passive") return;
+      if (!rec.heardVoice || rec.blob.size < 1200) continue;
+      const res = await sttRequest(rec.blob);
+      if (res.unavailable) {
+        enableTextMode("stt unavailable");
+        return;
+      }
+      const said = res.text || "";
+      if (WAKE_RE.test(said)) {
+        const tail = said.split(WAKE_RE).pop().replace(/^[\s,!.…-]+/, "").trim();
+        activate(tail);
+        return;
+      }
+    }
+  }
+
   // ════════════════════════════════════════════════════════
-  //  Путь 3: ввод текстом (фолбэк)
+  //  Текстовый ввод (фолбэк без микрофона)
   // ════════════════════════════════════════════════════════
   let textBar = null;
   function enableTextMode(note) {
     state.inputMode = "text";
+    state.phase = "active";
+    setHint(false);
     if (textBar) { textBar.style.display = "flex"; return; }
     textBar = document.createElement("form");
     textBar.id = "text-input-bar";
@@ -256,51 +337,75 @@
       inp.focus();
     });
     inp.focus();
+    setMode("listening");
+    hudText.textContent = "ВВЕДИТЕ СООБЩЕНИЕ";
     if (note) console.warn("[voice] текстовый режим:", note);
   }
 
-  // ── главный цикл ────────────────────────────────────────
-  async function loopVoice(listenFn) {
-    while (state.active) {
-      const res = await listenFn();
-      if (!state.active) break;
-      if (res && res.unavailable) {
-        await speak("Распознавание речи сейчас недоступно. Напишите, пожалуйста, " +
-                    "сообщение в строке внизу, а я отвечу голосом.");
-        enableTextMode("stt unavailable");
-        return;
-      }
-      const said = typeof res === "string" ? res : (res ? res.text : "");
-      if (!said) continue;          // тишина — слушаем снова
-      await respondTo(said);
-    }
+  // ════════════════════════════════════════════════════════
+  //  Фазы: passive (заставка) ⇄ active (диалог)
+  // ════════════════════════════════════════════════════════
+  function enterPassive() {
+    state.phase = "passive";
     setMode("idle");
-    hudText.textContent = "IDLE";
+    setSub("");
+    hudText.textContent = PASSIVE_HUD;
+    setHint(true);
+    if (state.inputMode === "sr") wakeLoopSR();
+    else if (state.inputMode === "server") wakeLoopServer();
   }
 
-  // ── запуск (по жесту пользователя) ──────────────────────
-  async function start(source) {
-    if (state.active) return;
-    state.active = true;
+  async function activate(firstUtterance) {
+    if (state.phase === "active") return;
+    state.phase = "active";
+    setHint(false);
+
+    let greet = "Здравствуйте! Меня зовут Оливия. Чем могу вам помочь?";
+    try { greet = (await (await fetch("/api/greeting")).json()).text || greet; } catch (_) {}
+    await speak(greet);
+
+    if (firstUtterance && firstUtterance.length > 2) {
+      await respondTo(firstUtterance);
+    }
+
+    const listenFn = state.inputMode === "sr" ? listenSR : listenServer;
+    let silences = 0;
+    while (state.phase === "active") {
+      const res = await listenFn();
+      if (state.phase !== "active") break;
+      if (res && res.unavailable) { enableTextMode("stt unavailable"); return; }
+      const said = (typeof res === "string" ? res : (res ? res.text : "")) || "";
+      if (!said) {
+        silences++;
+        if (silences >= SILENCE_LIMIT) break;   // молчит/ушёл → заставка
+        continue;
+      }
+      silences = 0;
+      if (BYE_RE.test(said)) {
+        setSub("вы: " + said, "user");
+        await speak("Хорошего дня! Если понадоблюсь — просто скажите: Оливия.");
+        break;
+      }
+      await respondTo(said);
+    }
+    if (state.phase !== "off") enterPassive();
+  }
+
+  // ── запуск киоска (по жесту — браузеру нужен клик для микрофона) ──
+  async function startKiosk() {
+    if (state.phase !== "off") return;
 
     try {
       const r = await fetch("/api/tts/status");
-      state.serverTTS = !!(await r.json()).available;
+      const st = await r.json();
+      state.serverTTS = !!st.available;
+      console.log("[voice] server TTS:", st);
     } catch (_) { state.serverTTS = false; }
-    console.log("[voice] server TTS:", state.serverTTS ? "Piper" : "browser");
-
-    const greetUrl = source === "camera"
-      ? "/api/greeting?source=camera"
-      : "/api/greeting";
-    let greet = "Здравствуйте, меня зовут Оливия. Чем могу помочь?";
-    try { greet = (await (await fetch(greetUrl)).json()).text || greet; } catch (_) {}
-    await speak(greet);
 
     if (SR) {
       state.inputMode = "sr";
-      loopVoice(listenSR);
+      enterPassive();
     } else if (hasRecorder) {
-      // Firefox: проверяем серверный STT перед записью
       let sttOk = false;
       try {
         const st = await fetch("/api/stt/status");
@@ -308,29 +413,26 @@
       } catch (_) {}
       if (sttOk) {
         state.inputMode = "server";
-        loopVoice(listenServer);
+        enterPassive();
       } else {
-        console.warn("[voice] серверный STT недоступен → текстовый ввод");
         enableTextMode("server STT not available");
-        setMode("listening");
-        hudText.textContent = "ВВЕДИТЕ СООБЩЕНИЕ";
       }
     } else {
       enableTextMode("no SR, no MediaRecorder");
-      setMode("listening");
-      hudText.textContent = "ВВЕДИТЕ СООБЩЕНИЕ";
     }
   }
 
   function stop() {
-    state.active = false;
+    state.phase = "off";
+    setHint(false);
     try { window.speechSynthesis.cancel(); } catch (_) {}
     try { state.audioEl && state.audioEl.pause(); } catch (_) {}
     try { state.rec && state.rec.stop(); } catch (_) {}
     setMode("idle");
+    hudText.textContent = "IDLE";
   }
 
-  // ── индикатор камеры ────────────────────────────────────
+  // ── индикатор камеры (если сервер настроен с камерой) ─────
   function buildCameraBadge() {
     if (document.getElementById("cam-badge")) return;
     const el = document.createElement("div");
@@ -370,61 +472,65 @@
     lbl.textContent = info.text;
   }
 
-  // ── серверная камера (SSE) ─────────────────────────────
+  // SSE: статус камеры. Авто-приветствий по детекции больше НЕТ —
+  // активация только по кодовому слову «Оливия».
   function connectCamera() {
     buildCameraBadge();
     const es = new EventSource("/api/events");
     es.onmessage = (e) => {
       try {
         const d = JSON.parse(e.data);
-        if (d.type === "camera_status") {
-          updateCameraBadge(d);
-          return;
-        }
-        if (d.type !== "camera") return;
-        if (d.event === "person_detected" && !state.active) {
-          const ov = document.getElementById("start-overlay");
-          if (ov) { ov.classList.add("hide"); setTimeout(() => ov.remove(), 600); }
-          start("camera");
-        } else if (d.event === "person_left" && state.active) {
-          stop();
-        }
+        if (d.type === "camera_status") updateCameraBadge(d);
       } catch (_) {}
     };
   }
 
-  // ── оверлей старта ──────────────────────────────────────
+  // ── оверлей старта (один раз, для разрешения на микрофон) ──
   function buildOverlay() {
     if (document.getElementById("start-overlay")) return;
-    const hint = SR
-      ? "разрешите доступ к микрофону"
-      : (hasRecorder
-          ? "распознавание на сервере · разрешите доступ к микрофону"
-          : "введите сообщение текстом — Оливия ответит голосом");
+    const hint = SR || hasRecorder
+      ? "разрешите доступ к микрофону — дальше киоск работает сам"
+      : "голосовой ввод недоступен — будет текстовая строка";
     const ov = document.createElement("div");
     ov.id = "start-overlay";
     ov.innerHTML =
       '<div class="ov-inner">' +
       '<div class="ov-circle"></div>' +
-      '<div class="ov-title">Коснитесь экрана, чтобы поговорить с Оливией</div>' +
+      '<div class="ov-title">Коснитесь экрана, чтобы включить Оливию</div>' +
       '<div class="ov-sub">администратор клиники «Стоматология №1» · ' + hint + "</div>" +
       "</div>";
     ov.addEventListener("click", () => {
       ov.classList.add("hide");
       setTimeout(() => ov.remove(), 600);
-      start();
+      startKiosk();
     });
     document.body.appendChild(ov);
   }
 
-  window.addEventListener("keydown", (e) => { if (e.key === "Escape") stop(); });
+  window.addEventListener("keydown", (e) => {
+    if (e.key !== "Escape") return;
+    if (state.phase === "active") {
+      // прервать диалог → вернуться к заставке
+      try { window.speechSynthesis.cancel(); } catch (_) {}
+      try { state.audioEl && state.audioEl.pause(); } catch (_) {}
+      try { state.rec && state.rec.stop(); } catch (_) {}
+      enterPassive();
+    } else {
+      stop();
+    }
+  });
 
   if ("speechSynthesis" in window) {
     pickVoice();
     window.speechSynthesis.onvoiceschanged = pickVoice;
   }
 
-  window.SmileVoice = { start, stop, state };
+  window.SmileVoice = {
+    start: () => activate(""),
+    startKiosk,
+    stop,
+    state,
+  };
 
   function init() { buildOverlay(); connectCamera(); }
   document.addEventListener("DOMContentLoaded", init);
