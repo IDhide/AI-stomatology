@@ -23,7 +23,7 @@ services:
         CKPT=/opt/fish-speech/checkpoints/openaudio-s1-mini
         if [ ! -f "$$CKPT/codec.pth" ]; then
           echo "Fish Speech: качаю веса OpenAudio S1-mini (~1 ГБ, разово)…"
-          huggingface-cli download fishaudio/openaudio-s1-mini --local-dir "$$CKPT"
+          python -c "from huggingface_hub import snapshot_download; snapshot_download('fishaudio/openaudio-s1-mini', local_dir='$$CKPT')"
         fi
         echo "Fish Speech: запускаю сервер синтеза на 0.0.0.0:8080 (cpu)…"
         # GPU контейнеру не отдан → torch автоматически выберет cpu.
