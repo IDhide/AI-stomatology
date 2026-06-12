@@ -67,12 +67,15 @@ RUN if [ "$WITH_TTS" = "1" ] && [ "$TTS_ENGINE" = "qwen3vc" ]; then \
 # Клонирование голоса (XTTS v2 / Coqui) — лёгкий (467M, ~2 ГБ VRAM), быстрый,
 # работает и на CPU. Лицензия модели CPML (non-commercial).
 # torchaudio обязателен для coqui-tts (без него: No module named 'torchaudio').
+# transformers<5 обязателен: в 5.x убрали isin_mps_friendly, который импортирует
+# coqui-tts (иначе XTTS молча падает и откатывается на Silero).
 RUN if [ "$WITH_TTS" = "1" ] && [ "$TTS_ENGINE" = "xtts" ]; then \
       apt-get update -q && apt-get install -y --no-install-recommends \
         sox libsox-fmt-all espeak-ng && \
       rm -rf /var/lib/apt/lists/* && \
       uv pip install --python .venv/bin/python \
-        "torch>=2.1" "torchaudio>=2.1" "numpy>=1.24" "soundfile>=0.12" "coqui-tts"; \
+        "torch>=2.1" "torchaudio>=2.1" "numpy>=1.24" "soundfile>=0.12" \
+        "transformers>=4.57,<5" "coqui-tts"; \
     fi
 
 # Опционально — детекция лиц камерой (OpenCV, ~50 МБ)
