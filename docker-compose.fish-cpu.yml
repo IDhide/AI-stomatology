@@ -55,8 +55,9 @@ services:
     image: fishaudio/fish-speech:server-cpu
     container_name: smile-fish
     # По умолчанию server-образ грузит тяжёлую s2-pro. Указываем серверу нашу
-    # лёгкую openaudio-s1-mini. --listen НЕ передаём: entrypoint сам ставит адрес.
+    # лёгкую openaudio-s1-mini. ВАЖНО: entrypoint ждёт ПЕРВЫМ аргументом адрес.
     command:
+      - "0.0.0.0:8080"
       - "--llama-checkpoint-path"
       - "checkpoints/openaudio-s1-mini"
       - "--decoder-checkpoint-path"
