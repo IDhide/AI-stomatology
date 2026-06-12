@@ -70,6 +70,18 @@ services:
     environment:
       # компиляция ядер ускоряет синтез на GPU (первый прогон дольше)
       COMPILE: "1"
+    # По умолчанию server-образ грузит тяжёлую s2-pro (нужно ~32 ГБ VRAM).
+    # Явно указываем серверу нашу лёгкую openaudio-s1-mini (entrypoint образа
+    # не трогаем — передаём только аргументы api_server).
+    command:
+      - "--listen"
+      - "0.0.0.0:8080"
+      - "--llama-checkpoint-path"
+      - "checkpoints/openaudio-s1-mini"
+      - "--decoder-checkpoint-path"
+      - "checkpoints/openaudio-s1-mini/codec.pth"
+      - "--decoder-config-name"
+      - "modded_dac_vq"
     volumes:
       - fish_models:/app/checkpoints   # кэш весов модели
     ports:

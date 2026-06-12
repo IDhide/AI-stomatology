@@ -54,6 +54,17 @@ services:
   fish-speech:
     image: fishaudio/fish-speech:server-cpu
     container_name: smile-fish
+    # По умолчанию server-образ грузит тяжёлую s2-pro. Явно указываем серверу
+    # нашу лёгкую openaudio-s1-mini (entrypoint образа не трогаем).
+    command:
+      - "--listen"
+      - "0.0.0.0:8080"
+      - "--llama-checkpoint-path"
+      - "checkpoints/openaudio-s1-mini"
+      - "--decoder-checkpoint-path"
+      - "checkpoints/openaudio-s1-mini/codec.pth"
+      - "--decoder-config-name"
+      - "modded_dac_vq"
     volumes:
       - fish_models:/app/checkpoints
     ports:
