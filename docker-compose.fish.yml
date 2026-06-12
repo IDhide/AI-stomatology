@@ -40,10 +40,6 @@ services:
       - |
         set -e
         CKPT=/app/checkpoints/openaudio-s1-mini
-        if [ -f "$$CKPT/codec.pth" ]; then
-          echo "Fish Speech: веса уже в кэше, пропускаю загрузку"
-          exit 0
-        fi
         pip install -q huggingface_hub
         if [ -z "$$HF_TOKEN" ]; then
           echo "──────────────────────────────────────────────────────────"
@@ -54,9 +50,17 @@ services:
           echo "  3) пропишите HF_TOKEN=hf_xxx в файл .env и перезапустите"
           echo "──────────────────────────────────────────────────────────"
         fi
-        echo "Fish Speech: качаю веса OpenAudio S1-mini (~1 ГБ, разово)…"
-        python -c "from huggingface_hub import snapshot_download; snapshot_download('fishaudio/openaudio-s1-mini', local_dir='$$CKPT')"
-        echo "Fish Speech: веса загружены"
+        # snapshot_download инкрементальный: докачивает недостающие файлы и
+        # пропускает готовые — чинит и неполную загрузку из прошлых попыток.
+        echo "Fish Speech: проверяю и докачиваю веса OpenAudio S1-mini…"
+        if python -c "from huggingface_hub import snapshot_download; snapshot_download('fishaudio/openaudio-s1-mini', local_dir='$$CKPT')"; then
+          echo "Fish Speech: веса готовы"
+        elif [ -f "$$CKPT/config.json" ] && [ -f "$$CKPT/codec.pth" ]; then
+          echo "Fish Speech: HF недоступен, но веса уже в кэше — продолжаю"
+        else
+          echo "Fish Speech: не удалось скачать веса (проверьте HF_TOKEN и доступ к модели)"
+          exit 1
+        fi
     restart: "no"
 
   # ── Сервер Fish Speech (синтез голоса) ───────────────────────────
