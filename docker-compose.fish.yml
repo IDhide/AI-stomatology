@@ -71,11 +71,9 @@ services:
       # компиляция ядер ускоряет синтез на GPU (первый прогон дольше)
       COMPILE: "1"
     # По умолчанию server-образ грузит тяжёлую s2-pro (нужно ~32 ГБ VRAM).
-    # Явно указываем серверу нашу лёгкую openaudio-s1-mini (entrypoint образа
-    # не трогаем — передаём только аргументы api_server).
+    # Указываем серверу нашу лёгкую openaudio-s1-mini. --listen НЕ передаём:
+    # entrypoint образа сам ставит адрес 0.0.0.0:8080.
     command:
-      - "--listen"
-      - "0.0.0.0:8080"
       - "--llama-checkpoint-path"
       - "checkpoints/openaudio-s1-mini"
       - "--decoder-checkpoint-path"
