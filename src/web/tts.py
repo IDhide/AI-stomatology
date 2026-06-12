@@ -83,6 +83,27 @@ def _engine() -> str:
     return os.getenv("TTS_ENGINE", "silero").strip().lower()
 
 
+# Поддерживаемые форматы образца голоса (по приоритету: wav надёжнее всего).
+_VOICE_REF_EXTS = (".wav", ".flac", ".mp3", ".ogg", ".m4a")
+
+
+def _resolve_voice_ref(path: str) -> str:
+    """Вернуть путь к образцу голоса. Если указанного файла нет — поискать
+    рядом файл с тем же именем, но другим расширением (напр. задан
+    reference.wav, а лежит reference.mp3). Так образец «просто находится»."""
+    path = (path or "").strip()
+    if path and Path(path).exists():
+        return path
+    if not path:
+        return ""
+    p = Path(path)
+    for ext in _VOICE_REF_EXTS:
+        cand = p.with_suffix(ext)
+        if cand.exists():
+            return str(cand)
+    return path  # ничего не нашли — вернём как было (для понятной ошибки)
+
+
 # ════════════════════════════════════════════════════════════════════
 #  Fish Speech / OpenAudio S1 — клонирование голоса (локальный сервер)
 # ════════════════════════════════════════════════════════════════════
@@ -209,7 +230,7 @@ def _get_xtts():
     if _xtts_error is not None:
         return None
 
-    ref_audio = os.getenv("XTTS_REF_AUDIO", "").strip()
+    ref_audio = _resolve_voice_ref(os.getenv("XTTS_REF_AUDIO", ""))
     if not ref_audio or not Path(ref_audio).exists():
         _xtts_error = f"XTTS_REF_AUDIO не найден ({ref_audio or 'не задан'})"
         logger.error(f"TTS XTTS: {_xtts_error}")
@@ -247,7 +268,7 @@ def _xtts_synthesize(text: str) -> tuple[bytes, str | None]:
     if model is None:
         return b"", _xtts_error or "xtts_unavailable"
 
-    ref_audio = os.getenv("XTTS_REF_AUDIO", "").strip()
+    ref_audio = _resolve_voice_ref(os.getenv("XTTS_REF_AUDIO", ""))
     language = os.getenv("XTTS_LANGUAGE", "ru").strip() or "ru"
 
     try:
