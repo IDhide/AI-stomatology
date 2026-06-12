@@ -134,6 +134,12 @@ make fish        # с GPU (~4 ГБ VRAM, ответ ~1–2 с) — лучшее 
 make fish-cpu    # без GPU (медленнее, для проверки/демо)
 ```
 
+> ⚠ Модель `openaudio-s1-mini` на Hugging Face закрыта лицензией (gated).
+> Один раз примите условия на её
+> [странице](https://huggingface.co/fishaudio/openaudio-s1-mini) («Agree and
+> access repository»), создайте [токен](https://huggingface.co/settings/tokens)
+> с правом read и пропишите `HF_TOKEN=hf_...` в `.env`.
+
 Положите образец голоса в `assets/voice/` (`reference.mp3` или `.wav`,
 10–15 с чистой речи) и его расшифровку в `reference.txt` — Оливия заговорит
 этим голосом. Первый старт качает веса (~1 ГБ) в volume `fish_models` и

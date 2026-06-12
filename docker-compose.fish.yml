@@ -30,6 +30,9 @@ services:
   fish-pull:
     image: python:3.11-slim
     container_name: smile-fish-pull
+    environment:
+      # Модель fishaudio/openaudio-s1-mini — gated: нужен токен HF (см. .env).
+      HF_TOKEN: "${HF_TOKEN:-}"
     volumes:
       - fish_models:/app/checkpoints
     entrypoint: ["/bin/sh", "-c"]
@@ -41,8 +44,17 @@ services:
           echo "Fish Speech: веса уже в кэше, пропускаю загрузку"
           exit 0
         fi
-        echo "Fish Speech: качаю веса OpenAudio S1-mini (~1 ГБ, разово)…"
         pip install -q huggingface_hub
+        if [ -z "$$HF_TOKEN" ]; then
+          echo "──────────────────────────────────────────────────────────"
+          echo "⚠ HF_TOKEN не задан, а модель openaudio-s1-mini — закрытая."
+          echo "  1) откройте https://huggingface.co/fishaudio/openaudio-s1-mini"
+          echo "     и нажмите «Agree and access repository»"
+          echo "  2) создайте токен (read): https://huggingface.co/settings/tokens"
+          echo "  3) пропишите HF_TOKEN=hf_xxx в файл .env и перезапустите"
+          echo "──────────────────────────────────────────────────────────"
+        fi
+        echo "Fish Speech: качаю веса OpenAudio S1-mini (~1 ГБ, разово)…"
         python -c "from huggingface_hub import snapshot_download; snapshot_download('fishaudio/openaudio-s1-mini', local_dir='$$CKPT')"
         echo "Fish Speech: веса загружены"
     restart: "no"
