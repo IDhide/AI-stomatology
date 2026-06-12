@@ -125,22 +125,22 @@ def _fish_reference() -> tuple[bytes | None, str]:
 
 
 def _fish_health() -> bool:
-    """Доступен ли сервер Fish Speech (короткий пинг /v1/health)."""
+    """Доступен ли сервер Fish Speech (короткий пинг корня)."""
     global _fish_error
     try:
         import requests  # type: ignore
     except Exception as e:
         _fish_error = f"requests не установлен ({e})"
         return False
+    base = _fish_api_url()
     try:
-        r = requests.get(f"{_fish_api_url()}/v1/health", timeout=3)
-        if r.ok:
-            _fish_error = None
-            return True
-        _fish_error = f"сервер вернул HTTP {r.status_code}"
-        return False
+        # requests не бросает на 4xx/5xx — любой HTTP-ответ значит, что
+        # сервер поднят и слушает. Падаем только на отказе соединения.
+        requests.get(f"{base}/", timeout=3)
+        _fish_error = None
+        return True
     except Exception as e:
-        _fish_error = f"сервер недоступен по {_fish_api_url()} ({e})"
+        _fish_error = f"сервер недоступен по {base} ({e})"
         return False
 
 

@@ -5,60 +5,53 @@
 #  (несколько секунд на реплику) — годится для проверки/демо без видеокарты.
 #  Если есть GPU — используйте `make fish` (намного быстрее).
 #
+#  Используем официальный server-образ latest-server-cpu: он сам поднимает
+#  API-сервер синтеза на порту 8080. Веса качаются разово init-контейнером.
+#
 #  Запуск:  make fish-cpu
 # ════════════════════════════════════════════════════════════════════
 
 services:
 
-  # ── Сервер Fish Speech на CPU (без блока deploy.resources) ────────
-  fish-speech:
-    image: fishaudio/fish-speech:latest
-    container_name: smile-fish
-    environment:
-      HF_HOME: "/opt/fish-speech/checkpoints/hf"
-    entrypoint: ["/bin/bash", "-c"]
+  # ── Разовая загрузка весов модели в общий том ────────────────────
+  fish-pull:
+    image: python:3.11-slim
+    container_name: smile-fish-pull
+    volumes:
+      - fish_models:/app/checkpoints
+    entrypoint: ["/bin/sh", "-c"]
     command:
       - |
         set -e
-        CKPT=/opt/fish-speech/checkpoints/openaudio-s1-mini
-        # Находим интерпретатор образа с torch (venv/conda не активируется при
-        # переопределённом entrypoint). GPU контейнеру не отдан → torch выберет cpu.
-        PY=""
-        for p in /opt/fish-speech/.venv/bin/python /opt/fish-speech/.venv/bin/python3 \
-                 /opt/conda/bin/python /opt/conda/envs/*/bin/python \
-                 "$$(command -v python || true)" "$$(command -v python3 || true)"; do
-          [ -n "$$p" ] && [ -x "$$p" ] || continue
-          if "$$p" -c "import torch" >/dev/null 2>&1; then PY="$$p"; break; fi
-        done
-        if [ -z "$$PY" ]; then
-          PY=$$(find /opt /usr/local -maxdepth 6 -name 'python3*' 2>/dev/null \
-                | while read -r c; do "$$c" -c "import torch" >/dev/null 2>&1 && echo "$$c" && break; done)
+        CKPT=/app/checkpoints/openaudio-s1-mini
+        if [ -f "$$CKPT/codec.pth" ]; then
+          echo "Fish Speech: веса уже в кэше, пропускаю загрузку"
+          exit 0
         fi
-        if [ -z "$$PY" ]; then echo "Fish Speech: не нашёл python с torch в образе"; exit 1; fi
-        echo "Fish Speech: интерпретатор $$PY"
-        "$$PY" -c "import huggingface_hub" >/dev/null 2>&1 || "$$PY" -m pip install -q huggingface_hub
-        if [ ! -f "$$CKPT/codec.pth" ]; then
-          echo "Fish Speech: качаю веса OpenAudio S1-mini (~1 ГБ, разово)…"
-          "$$PY" -c "from huggingface_hub import snapshot_download; snapshot_download('fishaudio/openaudio-s1-mini', local_dir='$$CKPT')"
-        fi
-        echo "Fish Speech: запускаю сервер синтеза на 0.0.0.0:8080 (cpu)…"
-        cd /opt/fish-speech
-        exec "$$PY" -m tools.api_server \
-          --listen 0.0.0.0:8080 \
-          --llama-checkpoint-path "$$CKPT" \
-          --decoder-checkpoint-path "$$CKPT/codec.pth" \
-          --decoder-config-name modded_dac_vq
+        echo "Fish Speech: качаю веса OpenAudio S1-mini (~1 ГБ, разово)…"
+        pip install -q huggingface_hub
+        python -c "from huggingface_hub import snapshot_download; snapshot_download('fishaudio/openaudio-s1-mini', local_dir='$$CKPT')"
+        echo "Fish Speech: веса загружены"
+    restart: "no"
+
+  # ── Сервер Fish Speech на CPU (без блока deploy.resources) ────────
+  fish-speech:
+    image: fishaudio/fish-speech:latest-server-cpu
+    container_name: smile-fish
     volumes:
-      - fish_models:/opt/fish-speech/checkpoints
+      - fish_models:/app/checkpoints
     ports:
       - "8081:8080"
     healthcheck:
       test: ["CMD", "python3", "-c",
-             "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8080/v1/health',timeout=5).status==200 else 1)"]
+             "import socket,sys; s=socket.socket(); sys.exit(0 if s.connect_ex(('localhost',8080))==0 else 1)"]
       interval: 15s
       timeout: 10s
-      retries: 5
-      start_period: 900s   # на CPU прогрев дольше
+      retries: 10
+      start_period: 600s   # на CPU прогрев дольше
+    depends_on:
+      fish-pull:
+        condition: service_completed_successfully
     restart: unless-stopped
 
   # ── Веб-киоск: голос через сервер Fish Speech ────────────────────
