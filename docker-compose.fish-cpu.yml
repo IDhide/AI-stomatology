@@ -5,7 +5,7 @@
 #  (несколько секунд на реплику) — годится для проверки/демо без видеокарты.
 #  Если есть GPU — используйте `make fish` (намного быстрее).
 #
-#  Используем официальный server-образ latest-server-cpu: он сам поднимает
+#  Используем официальный server-образ server-cpu: он сам поднимает
 #  API-сервер синтеза на порту 8080. Веса качаются разово init-контейнером.
 #
 #  Запуск:  make fish-cpu
@@ -36,7 +36,7 @@ services:
 
   # ── Сервер Fish Speech на CPU (без блока deploy.resources) ────────
   fish-speech:
-    image: fishaudio/fish-speech:latest-server-cpu
+    image: fishaudio/fish-speech:server-cpu
     container_name: smile-fish
     volumes:
       - fish_models:/app/checkpoints

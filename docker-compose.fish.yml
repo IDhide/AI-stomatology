@@ -6,7 +6,7 @@
 #  open-source (Apache 2.0), крутится ЛОКАЛЬНО отдельным контейнером,
 #  без облака и API-ключей. web обращается к нему по HTTP.
 #
-#  Используем ОФИЦИАЛЬНЫЙ server-образ (latest-server-cuda): он сам
+#  Используем ОФИЦИАЛЬНЫЙ server-образ (server-cuda): он сам
 #  поднимает API-сервер синтеза на порту 8080 — entrypoint не трогаем.
 #  Веса монтируются в /app/checkpoints; качаем их разово отдельным
 #  init-контейнером fish-pull (как ollama-pull).
@@ -49,7 +49,7 @@ services:
 
   # ── Сервер Fish Speech (синтез голоса) ───────────────────────────
   fish-speech:
-    image: fishaudio/fish-speech:latest-server-cuda
+    image: fishaudio/fish-speech:server-cuda
     container_name: smile-fish
     environment:
       # компиляция ядер ускоряет синтез на GPU (первый прогон дольше)
