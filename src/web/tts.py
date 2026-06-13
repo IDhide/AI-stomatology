@@ -50,6 +50,8 @@ tts.py
   QWEN_SPEAKER        — тембр: Vivian | Serena | Ono_Anna | Sohee (женские),
                         Ryan | Aiden | Uncle_Fu | Dylan | Eric (мужские)
                         (по умолчанию Vivian — женский)
+  QWEN_CV_MODEL       — модель CustomVoice (по умолчанию 1.7B-CustomVoice).
+                        Отдельно от QWEN_TTS_MODEL (та — для клонирования qwen3vc)
   QWEN_LANGUAGE       — язык речи (по умолчанию Russian)
   QWEN_DEVICE         — cuda:0 | cpu (по умолчанию cuda:0)
   QWEN_ATTN           — sdpa | flash_attention_2 | eager (по умолчанию sdpa)
@@ -466,7 +468,13 @@ def _get_qwen_cv():
         logger.warning(f"TTS Qwen недоступен: {_qwen_cv_error}. Установите: pip install qwen-tts")
         return None
 
-    model_name = os.getenv("QWEN_TTS_MODEL", "Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice")
+    model_name = os.getenv("QWEN_CV_MODEL", "Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice")
+    # CustomVoice-метод есть только у моделей CustomVoice; модель -Base (для
+    # клонирования) его не поддерживает. Защита от залежавшегося QWEN_TTS_MODEL.
+    if "customvoice" not in model_name.lower():
+        logger.warning(f"Qwen CustomVoice: модель '{model_name}' не CustomVoice — "
+                       "переключаюсь на Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice")
+        model_name = "Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice"
     device = os.getenv("QWEN_DEVICE", "cuda:0")
     attn = os.getenv("QWEN_ATTN", "sdpa")  # sdpa не требует сборки flash-attn
     dtype = torch.bfloat16 if "cuda" in device else torch.float32
