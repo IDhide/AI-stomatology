@@ -27,13 +27,20 @@ services:
         WITH_TTS: "1"
         TTS_ENGINE: "xtts"
     environment:
-      TTS_ENGINE: "xtts"
+      # Движок можно переключить на лету: TTS_ENGINE=silero make xtts
+      # (в образе уже есть и XTTS, и Silero — пересборка не нужна).
+      TTS_ENGINE: "${TTS_ENGINE:-xtts}"
       XTTS_REF_AUDIO: "${XTTS_REF_AUDIO:-/app/assets/voice/reference.wav}"
       XTTS_LANGUAGE: "${XTTS_LANGUAGE:-ru}"
       XTTS_DEVICE: "${XTTS_DEVICE:-cuda}"
       COQUI_TOS_AGREED: "1"
       # Кэш моделей Coqui (~1.8 ГБ)
       TTS_HOME: "/app/models/xtts"
+      # Для прослушивания Silero: голос и темп переключаются переменными.
+      # baya (тёплый) | xenia (чистый) | kseniya (мягкий). Темп: slow | x-slow | 90%
+      SILERO_SPEAKER: "${SILERO_SPEAKER:-kseniya}"
+      SILERO_RATE: "${SILERO_RATE:-}"
+      SILERO_SAMPLE_RATE: "${SILERO_SAMPLE_RATE:-48000}"
     volumes:
       - xtts_cache:/app/models/xtts
     # GPU для контейнера (если xtts_device=cuda). На CPU GPU не нужен —
