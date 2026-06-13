@@ -114,15 +114,17 @@ body[data-mode="speaking"]  #avatar { opacity: 1; transform: scale(1); }
   height: 86%;
 }
 
-/* цветовые акценты по режимам */
-body[data-mode="thinking"] #avatar {
-  background: radial-gradient(circle at 38% 34%, #ffcf7a 0%, #f2a13c 45%, #b8701d 100%);
-  box-shadow: 0 0 60px 8px rgba(242,161,60,0.45), 0 0 160px 30px rgba(242,161,60,0.25), inset 0 0 80px rgba(0,0,0,0.45);
+/* ── Вертикальный (портретный) киоск ────────────────────────
+   На вертикальном экране круг крупнее и чуть выше центра,
+   чтобы под ним помещались субтитры. */
+@media (orientation: portrait) {
+  #avatar { width: 62vmin; height: 62vmin; }
+  #stage { justify-content: center; gap: 5vh; padding-bottom: 8vh; }
+  #subtitle { bottom: 4vh; font-size: clamp(22px, 3.4vmin, 40px); }
 }
-body[data-mode="listening"] #avatar {
-  background: radial-gradient(circle at 38% 34%, #8affd6 0%, #36c79b 45%, #1b8f6b 100%);
-  box-shadow: 0 0 60px 8px rgba(54,199,155,0.45), 0 0 160px 30px rgba(54,199,155,0.22), inset 0 0 80px rgba(0,0,0,0.45);
-}
+
+/* Круг ВСЕГДА фиолетовый — цвет по режимам больше не меняется.
+   Состояние показывают волны внутри круга и подпись статуса. */
 
 /* ── Подпись статуса ────────────────────────────────────── */
 #status-label {
