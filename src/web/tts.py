@@ -78,6 +78,7 @@ from __future__ import annotations
 import io
 import os
 import re
+import threading
 import urllib.request
 import wave
 from pathlib import Path
@@ -446,6 +447,9 @@ def _qwen_synthesize(text: str) -> tuple[bytes, str | None]:
 #  (QWEN_SPEAKER) и язык (QWEN_LANGUAGE). На RTX 3060 12 ГБ 1.7B помещается.
 _qwen_cv_model = None
 _qwen_cv_error: str | None = None
+# Лок сериализует загрузку модели: прогрев и первый запрос браузера иначе
+# грузят 1.7B одновременно → две копии в VRAM → CUDA out of memory.
+_qwen_cv_lock = threading.Lock()
 
 # Женские тембры из набора Qwen3-TTS (язык тембра ≠ язык речи — модель
 # говорит по-русски любым тембром). Мужские: Uncle_Fu, Dylan, Eric, Ryan, Aiden.
@@ -460,6 +464,19 @@ def _get_qwen_cv():
     if _qwen_cv_error is not None:
         return None
 
+    # Сериализуем загрузку: пока один поток грузит модель, остальные ждут и
+    # затем переиспользуют её (без второй копии в VRAM → без OOM).
+    with _qwen_cv_lock:
+        if _qwen_cv_model is not None:
+            return _qwen_cv_model
+        if _qwen_cv_error is not None:
+            return None
+        return _load_qwen_cv()
+
+
+def _load_qwen_cv():
+    """Собственно загрузка (вызывается под _qwen_cv_lock)."""
+    global _qwen_cv_model, _qwen_cv_error
     try:
         import torch  # type: ignore
         from qwen_tts import Qwen3TTSModel  # type: ignore
