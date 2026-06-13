@@ -490,6 +490,9 @@ def build_app(auto_loop: bool = True) -> web.Application:
                 info = tts.engine_info()
                 if ok:
                     logger.success(f"TTS прогрет: engine={info['engine']}, loaded={info['loaded']}")
+                    # реальный синтез: первый ответ пациенту не платит за
+                    # автоподбор cuDNN / первую CUDA-аллокацию; кэширует приветствие
+                    tts.warmup()
                 else:
                     logger.error(f"TTS недоступен: errors={info['errors']}")
             except Exception:

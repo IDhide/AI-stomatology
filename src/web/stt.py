@@ -73,9 +73,12 @@ def transcribe(audio_bytes: bytes, suffix: str = ".webm") -> tuple[str, str | No
         with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as f:
             f.write(audio_bytes)
             tmp_path = f.name
+        # beam_size=1 (жадно) заметно быстрее на CPU; для коротких фраз
+        # ресепшена точность почти не страдает. Регулируется STT_BEAM.
+        beam = int(os.getenv("STT_BEAM", "1") or 1)
         params = dict(
             language="ru",
-            beam_size=5,
+            beam_size=beam,
             vad_filter=True,
             condition_on_previous_text=False,  # меньше «галлюцинаций» на шуме
             no_speech_threshold=0.6,

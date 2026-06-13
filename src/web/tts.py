@@ -81,6 +81,7 @@ import re
 import threading
 import urllib.request
 import wave
+from collections import OrderedDict
 from pathlib import Path
 
 from loguru import logger
@@ -510,6 +511,14 @@ def _load_qwen_cv():
                 model_name, device_map=device, dtype=dtype,
                 attn_implementation=attempt_attn,
             )
+            # Ускорение матмулов на Ampere (RTX 3060): TF32 + автоподбор cuDNN.
+            # Заметно быстрее без потери качества на слух.
+            try:
+                torch.backends.cuda.matmul.allow_tf32 = True
+                torch.backends.cudnn.allow_tf32 = True
+                torch.backends.cudnn.benchmark = True
+            except Exception:
+                pass
             break
         except Exception as e:
             last_exc = e
@@ -816,7 +825,55 @@ def is_available() -> bool:
     return _get_silero() is not None or _get_piper() is not None
 
 
+# ── Кэш готовых WAV ────────────────────────────────────────────────
+# Киоск повторяет одни и те же фразы (приветствие, прощание, «назовите имя…»).
+# Кэшируем синтез по тексту — повтор отдаётся мгновенно, без работы GPU.
+_WAV_CACHE: "OrderedDict[str, bytes]" = OrderedDict()
+_WAV_CACHE_MAX = int(os.getenv("TTS_CACHE_SIZE", "256") or 256)
+_wav_cache_lock = threading.Lock()
+
+
+def _cache_key(text: str) -> str:
+    # ключ учитывает движок и голос — при их смене кэш не пересекается
+    return "|".join((
+        _engine(),
+        os.getenv("QWEN_SPEAKER", ""),
+        os.getenv("SILERO_SPEAKER", ""),
+        text,
+    ))
+
+
 def synthesize(text: str) -> tuple[bytes, str | None]:
+    """Синтез речи с кэшем → (WAV-байты, ошибка). Повторные фразы — мгновенно."""
+    if not text or not text.strip():
+        return b"", "empty_text"
+    key = _cache_key(text.strip())
+    with _wav_cache_lock:
+        hit = _WAV_CACHE.get(key)
+        if hit is not None:
+            _WAV_CACHE.move_to_end(key)  # LRU: освежаем
+            return hit, None
+    audio, err = _synthesize_impl(text)
+    if not err and audio:
+        with _wav_cache_lock:
+            _WAV_CACHE[key] = audio
+            _WAV_CACHE.move_to_end(key)
+            while len(_WAV_CACHE) > _WAV_CACHE_MAX:
+                _WAV_CACHE.popitem(last=False)  # выкидываем самый старый
+    return audio, err
+
+
+def warmup() -> None:
+    """Прогрев: один реальный синтез, чтобы первый ответ пациенту не платил
+    за автоподбор cuDNN/первую CUDA-аллокацию. Заодно кэширует приветствие."""
+    try:
+        synthesize("Здравствуйте! Меня зовут Оливия.")
+        logger.success("TTS прогрет реальным синтезом (первый ответ будет быстрым)")
+    except Exception:
+        logger.exception("TTS warmup synth error")
+
+
+def _synthesize_impl(text: str) -> tuple[bytes, str | None]:
     """Синтезирует речь → (WAV-байты, ошибка).
 
     Цепочка фолбэков: при сбое выбранного движка пробуем следующий,

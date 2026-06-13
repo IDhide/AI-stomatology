@@ -46,6 +46,7 @@
     inputMode: "none",     // sr | server | text
     serverTTS: null,
     audioEl: null,
+    cancelSpeak: null,     // прерывание конвейера озвучки (Esc/стоп)
   };
 
   function setHint(visible) {
@@ -80,7 +81,43 @@
       voices.find((v) => /russian|русск/i.test(v.name)) || null;
   }
 
-  // ── TTS: серверный (XTTS/Silero), фолбэк — браузерный ────
+  // ── TTS: серверный (Qwen/Silero) с конвейером по фразам ──
+  // Главное для скорости: НЕ ждём синтез всего ответа. Бьём текст на фразы,
+  // начинаем говорить сразу после первой, а следующие синтезируем заранее,
+  // пока проигрывается текущая — паузы почти не слышно.
+  function splitSentences(text) {
+    const parts = (text.match(/[^.!?…\n]+[.!?…]*/g) || [text])
+      .map((s) => s.trim()).filter(Boolean);
+    const out = [];
+    for (const p of parts) {
+      // склеиваем слишком короткие куски с предыдущим (иначе рвано звучит)
+      if (out.length && (out[out.length - 1].length < 18 || p.length < 18)) {
+        out[out.length - 1] += " " + p;
+      } else {
+        out.push(p);
+      }
+    }
+    return out.length ? out : [text];
+  }
+
+  function ttsBlobURL(text) {
+    return fetch("/api/tts?text=" + encodeURIComponent(text))
+      .then((r) => { if (!r.ok) throw new Error("tts " + r.status); return r.blob(); })
+      .then((b) => URL.createObjectURL(b));
+  }
+
+  function playURL(url) {
+    return new Promise((resolve) => {
+      try { state.audioEl && state.audioEl.pause(); } catch (_) {}
+      const a = new Audio(url);
+      state.audioEl = a;
+      const fin = () => { try { URL.revokeObjectURL(url); } catch (_) {} resolve(); };
+      a.onended = fin;
+      a.onerror = fin;
+      a.play().catch(fin);
+    });
+  }
+
   function speak(text) {
     return new Promise((resolve) => {
       if (!text) return resolve();
@@ -88,30 +125,45 @@
       setSub(text, "bot");
       state.speaking = true;
 
-      const done = () => { state.speaking = false; resolve(); };
-      const safety = setTimeout(done,
-        Math.min(30000, 380 * text.split(/\s+/).length + 4000));
+      let cancelled = false;
+      state.cancelSpeak = () => { cancelled = true; };
+      const done = () => { state.speaking = false; state.cancelSpeak = null; resolve(); };
 
-      if (state.serverTTS) {
-        const url = "/api/tts?text=" + encodeURIComponent(text);
-        try { state.audioEl && state.audioEl.pause(); } catch (_) {}
-        const a = new Audio(url);
-        state.audioEl = a;
-        a.onended = () => { clearTimeout(safety); done(); };
-        a.onerror = () => {
+      // запасной путь — браузерный голос
+      if (!state.serverTTS) { speakBrowser(text).then(done); return; }
+
+      const safety = setTimeout(done,
+        Math.min(45000, 380 * text.split(/\s+/).length + 6000));
+
+      (async () => {
+        try {
+          const sents = splitSentences(text);
+          // конвейер: пока играет фраза i — уже синтезируется i+1
+          let nextUrl = ttsBlobURL(sents[0]);
+          for (let i = 0; i < sents.length; i++) {
+            if (cancelled) break;
+            let url;
+            try {
+              url = await nextUrl;
+            } catch (e) {
+              if (i === 0) throw e;   // первая фраза не синтезировалась → фолбэк
+              continue;               // споткнулись на середине — пропускаем
+            }
+            nextUrl = (i + 1 < sents.length)
+              ? ttsBlobURL(sents[i + 1]).catch(() => null)
+              : Promise.resolve(null);
+            if (cancelled) { try { URL.revokeObjectURL(url); } catch (_) {} break; }
+            await playURL(url);
+          }
           clearTimeout(safety);
-          console.warn("[voice] server TTS error → fallback на браузерный");
+          done();
+        } catch (e) {
+          clearTimeout(safety);
+          console.warn("[voice] server TTS pipeline error → браузерный голос", e);
           state.serverTTS = false;
           speakBrowser(text).then(done);
-        };
-        a.play().catch(() => {
-          clearTimeout(safety);
-          state.serverTTS = false;
-          speakBrowser(text).then(done);
-        });
-      } else {
-        speakBrowser(text).then(() => { clearTimeout(safety); done(); });
-      }
+        }
+      })();
     });
   }
 
@@ -455,6 +507,7 @@
     state.phase = "off";
     setHint(false);
     disarmTapActivation();
+    try { state.cancelSpeak && state.cancelSpeak(); } catch (_) {}
     try { window.speechSynthesis.cancel(); } catch (_) {}
     try { state.audioEl && state.audioEl.pause(); } catch (_) {}
     try { state.rec && state.rec.stop(); } catch (_) {}
@@ -541,6 +594,7 @@
     if (e.key !== "Escape") return;
     if (state.phase === "active") {
       // прервать диалог → вернуться к заставке
+      try { state.cancelSpeak && state.cancelSpeak(); } catch (_) {}
       try { window.speechSynthesis.cancel(); } catch (_) {}
       try { state.audioEl && state.audioEl.pause(); } catch (_) {}
       try { state.rec && state.rec.stop(); } catch (_) {}

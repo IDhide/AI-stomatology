@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import pathlib
 import random
 from dataclasses import dataclass
@@ -230,6 +231,9 @@ class LLMAssistant:
                 "model": self.model,
                 "messages": messages,
                 "stream": False,
+                # держим модель в памяти между репликами — иначе на CPU
+                # каждый ответ платит за повторную загрузку весов
+                "keep_alive": os.getenv("OLLAMA_KEEP_ALIVE", "30m"),
                 "options": {
                     "temperature": self.temperature,
                     "num_ctx": self.num_ctx,
