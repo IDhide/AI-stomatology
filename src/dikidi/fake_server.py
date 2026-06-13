@@ -1,17 +1,18 @@
 """
 fake_server.py
 ==============
-Искусственная симуляция DIKIDI API — самостоятельный HTTP-сервер.
+Тестовый DIKIDI API — самостоятельный HTTP-сервер.
 
-В отличие от client_stub.py (который подменяет клиента в памяти процесса),
-этот модуль поднимает НАСТОЯЩИЙ HTTP-сервер с теми же путями, что и боевой
-DIKIDI, поэтому продакшн-клиент `dikidi/client.py` может работать с ним
-без изменений — достаточно указать base_url на этот сервер.
+Поднимает HTTP-сервер с теми же путями, что и боевой DIKIDI, поэтому клиент
+`dikidi/client.py` работает с ним без изменений — достаточно указать base_url
+на этот сервер (по умолчанию так и есть). Для реального DIKIDI меняется только
+DIKIDI_BASE_URL / DIKIDI_TOKEN.
 
 Эндпоинты (подмножество, нужное ассистенту):
     GET  /v1/company/services           — список услуг
     GET  /v1/company/masters            — список врачей
     GET  /v1/booking/available-slots    — свободные окна
+    GET  /v1/booking/appointments       — записи на сегодня (проверка на ресепшене)
     POST /v1/booking/create             — создать запись
     GET  /v1/clients/search             — найти клиента по телефону
     GET  /healthz                       — проверка живости
@@ -68,6 +69,31 @@ class FakeDikidiState:
             }
         }
         self.slots = self._generate_slots()
+        # записи на СЕГОДНЯ (для сценария «пациент пришёл по записи»)
+        self.appointments = self._seed_appointments()
+
+    def _seed_appointments(self) -> list[dict]:
+        """Подтверждённые записи на сегодня — для проверки на ресепшене."""
+        today = datetime.now().strftime("%Y-%m-%d")
+        people = [
+            ("Лукин Иван Петрович",      "16:00", "Иванова Анна Сергеевна",   "терапевт"),
+            ("Смирнова Ольга Павловна",  "13:00", "Соколов Дмитрий Ильич",    "ортопед"),
+            ("Кузнецов Андрей Олегович", "14:00", "Петрова Елена Михайловна", "ортодонт"),
+            ("Васильева Мария Игоревна", "17:00", "Мария Лебедева",           "гигиенист"),
+            ("Орлов Сергей Викторович",  "19:00", "Иванова Анна Сергеевна",   "терапевт"),
+        ]
+        out = []
+        for i, (name, time, doctor, spec) in enumerate(people):
+            out.append({
+                "id": 200000 + i,
+                "client_name": name,
+                "date": today,
+                "time": time,
+                "master_name": doctor,
+                "specialty": spec,
+                "status": "confirmed",
+            })
+        return out
 
     def _generate_slots(self) -> list[dict]:
         slots: list[dict] = []
@@ -213,6 +239,43 @@ async def create_booking(request: web.Request) -> web.Response:
     return _envelope(record, status=201)
 
 
+def _norm_time(t: str) -> str:
+    """16, 16:0, 1600, «16 00» → 16:00."""
+    digits = "".join(c for c in t if c.isdigit())
+    if not digits:
+        return ""
+    if len(digits) <= 2:
+        return f"{int(digits):02d}:00"
+    digits = digits[:4].ljust(4, "0")
+    return f"{digits[:2]}:{digits[2:]}"
+
+
+async def get_appointments(request: web.Request) -> web.Response:
+    """Записи на сегодня. Фильтр по времени (?time=) и/или имени (?name=)."""
+    if not _check_auth(request):
+        return _envelope({"message": "unauthorized"}, status=401)
+    st: FakeDikidiState = request.app["state"]
+    q = request.query
+    today = datetime.now().strftime("%Y-%m-%d")
+    date = q.get("date", today)
+    time = q.get("time", "").strip()
+    name = q.get("name", "").strip().lower()
+
+    norm = _norm_time(time) if time else ""
+    result = []
+    for a in st.appointments:
+        if a["date"] != date:
+            continue
+        if norm and a["time"] != norm:
+            continue
+        if name and name not in a["client_name"].lower():
+            continue
+        result.append(a)
+    logger.info(f"DIKIDI(fake): записей на {date} "
+                f"(time={time or '-'}, name={name or '-'}): {len(result)}")
+    return _envelope(result)
+
+
 async def search_client(request: web.Request) -> web.Response:
     if not _check_auth(request):
         return _envelope({"message": "unauthorized"}, status=401)
@@ -236,6 +299,7 @@ def build_app(no_auth: bool = False, seed: int = 42) -> web.Application:
         web.get("/v1/company/services", get_services),
         web.get("/v1/company/masters", get_masters),
         web.get("/v1/booking/available-slots", available_slots),
+        web.get("/v1/booking/appointments", get_appointments),
         web.post("/v1/booking/create", create_booking),
         web.get("/v1/clients/search", search_client),
     ])

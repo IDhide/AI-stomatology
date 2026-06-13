@@ -114,15 +114,17 @@ body[data-mode="speaking"]  #avatar { opacity: 1; transform: scale(1); }
   height: 86%;
 }
 
-/* цветовые акценты по режимам */
-body[data-mode="thinking"] #avatar {
-  background: radial-gradient(circle at 38% 34%, #ffcf7a 0%, #f2a13c 45%, #b8701d 100%);
-  box-shadow: 0 0 60px 8px rgba(242,161,60,0.45), 0 0 160px 30px rgba(242,161,60,0.25), inset 0 0 80px rgba(0,0,0,0.45);
+/* ── Вертикальный (портретный) киоск ────────────────────────
+   На вертикальном экране круг крупнее и чуть выше центра,
+   чтобы под ним помещались субтитры. */
+@media (orientation: portrait) {
+  #avatar { width: 62vmin; height: 62vmin; }
+  #stage { justify-content: center; gap: 5vh; padding-bottom: 8vh; }
+  #subtitle { bottom: 4vh; font-size: clamp(22px, 3.4vmin, 40px); }
 }
-body[data-mode="listening"] #avatar {
-  background: radial-gradient(circle at 38% 34%, #8affd6 0%, #36c79b 45%, #1b8f6b 100%);
-  box-shadow: 0 0 60px 8px rgba(54,199,155,0.45), 0 0 160px 30px rgba(54,199,155,0.22), inset 0 0 80px rgba(0,0,0,0.45);
-}
+
+/* Круг ВСЕГДА фиолетовый — цвет по режимам больше не меняется.
+   Состояние показывают волны внутри круга и подпись статуса. */
 
 /* ── Подпись статуса ────────────────────────────────────── */
 #status-label {
@@ -187,3 +189,170 @@ body[data-mode="greeting"]  #hud-dot,
 body[data-mode="speaking"]  #hud-dot { background: var(--violet-bright); box-shadow: 0 0 10px var(--violet-glow); }
 body[data-mode="listening"] #hud-dot { background: #36c79b; box-shadow: 0 0 10px rgba(54,199,155,0.6); }
 body[data-mode="thinking"]  #hud-dot { background: #f2a13c; box-shadow: 0 0 10px rgba(242,161,60,0.6); }
+
+/* ── Оверлей старта (жест нужен для микрофона и звука) ───── */
+#start-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(5, 6, 13, 0.72);
+  backdrop-filter: blur(6px);
+  cursor: pointer;
+  transition: opacity 0.5s ease;
+}
+#start-overlay.hide { opacity: 0; }
+#start-overlay .ov-inner {
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 22px;
+  padding: 0 24px;
+}
+#start-overlay .ov-circle {
+  width: 22vmin;
+  height: 22vmin;
+  border-radius: 50%;
+  background: radial-gradient(circle at 38% 34%, var(--violet-bright) 0%, var(--violet) 48%, #4b1aa3 100%);
+  box-shadow: 0 0 60px 8px var(--violet-glow), 0 0 140px 24px rgba(123,47,247,0.3);
+  animation: ovpulse 2.2s ease-in-out infinite;
+}
+@keyframes ovpulse {
+  0%, 100% { transform: scale(0.94); }
+  50%      { transform: scale(1.04); }
+}
+#start-overlay .ov-title {
+  font-size: clamp(20px, 3vmin, 34px);
+  font-weight: 600;
+  color: #eaf2ff;
+}
+#start-overlay .ov-sub {
+  font-size: clamp(13px, 1.7vmin, 18px);
+  color: rgba(200, 215, 240, 0.6);
+  letter-spacing: 0.02em;
+}
+
+/* ── Строка ввода текстом (фолбэк, если STT недоступен) ──── */
+#text-input-bar {
+  position: fixed;
+  left: 50%;
+  bottom: 3vh;
+  transform: translateX(-50%);
+  z-index: 60;
+  display: flex;
+  gap: 10px;
+  width: min(720px, 88vw);
+}
+#text-input-bar input {
+  flex: 1;
+  padding: 14px 18px;
+  border-radius: 14px;
+  border: 1px solid rgba(157, 75, 255, 0.35);
+  background: rgba(10, 18, 36, 0.85);
+  color: #eaf2ff;
+  font-size: 18px;
+  outline: none;
+}
+#text-input-bar input::placeholder { color: rgba(200, 215, 240, 0.45); }
+#text-input-bar button {
+  width: 54px;
+  border: none;
+  border-radius: 14px;
+  background: var(--violet);
+  color: #fff;
+  font-size: 22px;
+  cursor: pointer;
+}
+#text-input-bar button:hover { background: var(--violet-bright); }
+
+/* ── Часы спящего режима (видны только на заставке) ──────── */
+#clock {
+  position: fixed;
+  top: 9vh;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 2;
+  text-align: center;
+  opacity: 0;
+  transition: opacity 1.2s ease;
+  pointer-events: none;
+  user-select: none;
+}
+#clock-time {
+  font-size: clamp(64px, 13vmin, 200px);
+  font-weight: 200;
+  letter-spacing: 0.04em;
+  line-height: 1;
+  color: rgba(234, 242, 255, 0.96);
+  text-shadow: 0 0 60px rgba(123, 47, 247, 0.45), 0 4px 40px rgba(5, 6, 13, 0.8);
+  font-variant-numeric: tabular-nums;
+}
+#clock-date {
+  margin-top: 1.4vh;
+  font-size: clamp(16px, 2.4vmin, 34px);
+  font-weight: 300;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: rgba(200, 215, 240, 0.62);
+}
+body[data-mode="idle"] #clock { opacity: 1; }
+
+/* ── Подсказка «скажите Оливия» (на заставке) ───────────── */
+#wake-hint {
+  position: fixed;
+  left: 50%;
+  bottom: 9vh;
+  transform: translateX(-50%);
+  z-index: 2;
+  text-align: center;
+  opacity: 0;
+  transition: opacity 1.2s ease;
+  pointer-events: none;
+}
+#wake-hint .wh-title {
+  font-size: clamp(24px, 3.6vmin, 52px);
+  font-weight: 500;
+  line-height: 1.45;
+  color: rgba(234, 242, 255, 0.92);
+  text-shadow: 0 2px 24px rgba(5, 6, 13, 0.8);
+}
+#wake-hint em {
+  font-style: normal;
+  font-weight: 700;
+  color: var(--violet-bright);
+  text-shadow: 0 0 24px var(--violet-glow);
+}
+/* видна только на заставке (idle) и только когда киоск слушает кодовое слово */
+body.wake-ready[data-mode="idle"] #wake-hint {
+  opacity: 1;
+  animation: whbreathe 3.6s ease-in-out infinite;
+}
+@keyframes whbreathe {
+  0%, 100% { transform: translateX(-50%) scale(1); }
+  50%      { transform: translateX(-50%) scale(1.025); }
+}
+
+/* ── Индикатор камеры (правый верхний угол) ─────────────── */
+#cam-badge {
+  position: fixed;
+  top: 22px;
+  right: 26px;
+  z-index: 4;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 13px;
+  letter-spacing: 0.08em;
+  color: rgba(200, 215, 240, 0.7);
+}
+#cam-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: #3a4a66;
+  flex-shrink: 0;
+  transition: background 0.3s, box-shadow 0.3s;
+}

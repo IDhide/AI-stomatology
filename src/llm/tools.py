@@ -18,6 +18,12 @@ from ..dental.knowledge_base import find_procedure
 
 TOOL_SCHEMAS = [
     {
+        "name": "check_appointment",
+        "description": "Проверить запись пациента на сегодня по времени и/или имени "
+                       "(для встречи на ресепшене). Возвращает имя пациента, время и врача.",
+        "args": {"time": "str? (например 16:00)", "name": "str?"},
+    },
+    {
         "name": "find_client",
         "description": "Найти клиента в базе DIKIDI по имени и/или телефону",
         "args": {"name": "str?", "phone": "str?"},
@@ -121,6 +127,20 @@ class ToolDispatcher:
             return {"ok": False, "error": str(e)}
 
     # ─── индивидуальные обработчики ─────────────────────────────
+    async def _t_check_appointment(self, time: str = "", name: str = "") -> Any:
+        appts = await self.dikidi.get_appointments(time=time, name=name)
+        if not appts:
+            return {"found": False}
+        return {
+            "found": True,
+            "count": len(appts),
+            "appointments": [
+                {"name": a.get("client_name"), "time": a.get("time"),
+                 "doctor": a.get("master_name"), "specialty": a.get("specialty")}
+                for a in appts
+            ],
+        }
+
     async def _t_find_client(self, name: str = "", phone: str = "") -> Any:
         return await self.dikidi.find_client(name=name, phone=phone)
 

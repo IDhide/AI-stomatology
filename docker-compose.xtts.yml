@@ -1,0 +1,58 @@
+# ════════════════════════════════════════════════════════════════════
+#  Smile.AI — НАДСТРОЙКА «клонированный голос XTTS v2» (GPU/CPU)
+#
+#  Оливия говорит голосом из вашего образца (assets/voice/reference.wav).
+#  XTTS v2 — лёгкий клонирующий движок (467M, ~2 ГБ VRAM), работает
+#  на GPU быстро (×5-10 realtime на RTX 3060) или на CPU (~1× realtime).
+#
+#  Преимущества над Qwen:
+#    • втрое легче (~2 ГБ VRAM против ~4 ГБ у Qwen)
+#    • быстрый холодный старт
+#    • без расшифровки референса — только аудио
+#    • работает на CPU, если GPU занят
+#
+#  ⚠ Лицензия модели — CPML (non-commercial). Для коммерческого
+#  использования уточните условия у Coqui или используйте Qwen.
+#
+#  Перед запуском:
+#    1. assets/voice/reference.wav  (10–15 с, чисто, моно, 24 кГц)
+#    2. make xtts   (или make full-xtts со всем стендом)
+# ════════════════════════════════════════════════════════════════════
+
+services:
+
+  web:
+    build:
+      args:
+        WITH_TTS: "1"
+        TTS_ENGINE: "xtts"
+    environment:
+      # Движок можно переключить на лету: TTS_ENGINE=silero make xtts
+      # (в образе уже есть и XTTS, и Silero — пересборка не нужна).
+      TTS_ENGINE: "${TTS_ENGINE:-xtts}"
+      XTTS_REF_AUDIO: "${XTTS_REF_AUDIO:-/app/assets/voice/reference.wav}"
+      XTTS_LANGUAGE: "${XTTS_LANGUAGE:-ru}"
+      XTTS_DEVICE: "${XTTS_DEVICE:-cuda}"
+      COQUI_TOS_AGREED: "1"
+      # Кэш моделей Coqui (~1.8 ГБ)
+      TTS_HOME: "/app/models/xtts"
+      # Для прослушивания Silero: голос и темп переключаются переменными.
+      # baya (тёплый) | xenia (чистый) | kseniya (мягкий). Темп: slow | x-slow | 90%
+      SILERO_SPEAKER: "${SILERO_SPEAKER:-kseniya}"
+      SILERO_RATE: "${SILERO_RATE:-}"
+      SILERO_SAMPLE_RATE: "${SILERO_SAMPLE_RATE:-48000}"
+    volumes:
+      - xtts_cache:/app/models/xtts
+    # GPU для контейнера (если xtts_device=cuda). На CPU GPU не нужен —
+    # просто уберите этот блок (или поставьте XTTS_DEVICE=cpu).
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+
+volumes:
+  xtts_cache:
+    driver: local

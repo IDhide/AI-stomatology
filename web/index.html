@@ -13,6 +13,12 @@
     <canvas id="bg-canvas"></canvas>
   </div>
 
+  <!-- Часы спящего режима (видны только на заставке) -->
+  <div id="clock">
+    <div id="clock-time">--:--</div>
+    <div id="clock-date"></div>
+  </div>
+
   <!-- Затемнение под аватар (появляется в активных режимах) -->
   <div id="dim"></div>
 
@@ -27,6 +33,11 @@
   <!-- Субтитры -->
   <div id="subtitle"></div>
 
+  <!-- Подсказка на заставке: как позвать Оливию -->
+  <div id="wake-hint">
+    <div class="wh-title">Чтобы связаться с администратором,<br/>скажите — <em>«Оливия»</em></div>
+  </div>
+
   <!-- Служебная плашка состояния (вверху слева) -->
   <div id="hud">
     <span id="hud-dot"></span>
@@ -34,6 +45,7 @@
   </div>
 
   <script src="app.js"></script>
+  <script src="voice.js"></script>
   <script src="camera.js"></script>
 </body>
 </html>

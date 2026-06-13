@@ -1,0 +1,134 @@
+# ════════════════════════════════════════════════════════════════════
+#  Smile.AI — НАДСТРОЙКА «живой голос Fish Speech / OpenAudio S1» (GPU)
+#
+#  Оливия говорит голосом из вашего образца (assets/voice/reference.*),
+#  но заметно живее и эмоциональнее, чем Silero. Fish Speech — полностью
+#  open-source (Apache 2.0), крутится ЛОКАЛЬНО отдельным контейнером,
+#  без облака и API-ключей. web обращается к нему по HTTP.
+#
+#  Используем ОФИЦИАЛЬНЫЙ server-образ (server-cuda): он сам
+#  поднимает API-сервер синтеза на порту 8080 — entrypoint не трогаем.
+#  Веса монтируются в /app/checkpoints; качаем их разово отдельным
+#  init-контейнером fish-pull (как ollama-pull).
+#
+#  Образец голоса (как у Qwen/XTTS):
+#    1. assets/voice/reference.mp3 (или .wav) — 10–15 с чистой речи
+#    2. assets/voice/reference.txt — точная расшифровка образца
+#
+#  Запуск:
+#    make fish            (или вручную:)
+#    docker compose -f docker-compose.demo.yml -f docker-compose.smart.yml \
+#                   -f docker-compose.fish.yml up --build
+#
+#  Первый старт качает веса OpenAudio S1-mini (~1 ГБ) в том fish_models —
+#  это разово, дальше берётся из кэша.
+# ════════════════════════════════════════════════════════════════════
+
+services:
+
+  # ── Разовая загрузка весов модели в общий том ────────────────────
+  fish-pull:
+    image: python:3.11-slim
+    container_name: smile-fish-pull
+    environment:
+      # Модель fishaudio/openaudio-s1-mini — gated: нужен токен HF (см. .env).
+      HF_TOKEN: "${HF_TOKEN:-}"
+    volumes:
+      - fish_models:/app/checkpoints
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        set -e
+        CKPT=/app/checkpoints/openaudio-s1-mini
+        pip install -q huggingface_hub
+        if [ -z "$$HF_TOKEN" ]; then
+          echo "──────────────────────────────────────────────────────────"
+          echo "⚠ HF_TOKEN не задан, а модель openaudio-s1-mini — закрытая."
+          echo "  1) откройте https://huggingface.co/fishaudio/openaudio-s1-mini"
+          echo "     и нажмите «Agree and access repository»"
+          echo "  2) создайте токен (read): https://huggingface.co/settings/tokens"
+          echo "  3) пропишите HF_TOKEN=hf_xxx в файл .env и перезапустите"
+          echo "──────────────────────────────────────────────────────────"
+        fi
+        # snapshot_download инкрементальный: докачивает недостающие файлы и
+        # пропускает готовые — чинит и неполную загрузку из прошлых попыток.
+        echo "Fish Speech: проверяю и докачиваю веса OpenAudio S1-mini…"
+        if python -c "from huggingface_hub import snapshot_download; snapshot_download('fishaudio/openaudio-s1-mini', local_dir='$$CKPT')"; then
+          echo "Fish Speech: веса готовы"
+        elif [ -f "$$CKPT/config.json" ] && [ -f "$$CKPT/codec.pth" ]; then
+          echo "Fish Speech: HF недоступен, но веса уже в кэше — продолжаю"
+        else
+          echo "Fish Speech: не удалось скачать веса (проверьте HF_TOKEN и доступ к модели)"
+          exit 1
+        fi
+    restart: "no"
+
+  # ── Сервер Fish Speech (синтез голоса) ───────────────────────────
+  fish-speech:
+    image: fishaudio/fish-speech:server-cuda
+    container_name: smile-fish
+    environment:
+      # компиляция ядер ускоряет синтез на GPU (первый прогон дольше)
+      COMPILE: "1"
+    # По умолчанию server-образ грузит тяжёлую s2-pro (нужно ~32 ГБ VRAM).
+    # Указываем серверу нашу лёгкую openaudio-s1-mini. ВАЖНО: entrypoint образа
+    # ждёт ПЕРВЫМ аргументом адрес прослушивания, остальное передаёт в api_server.
+    command:
+      - "0.0.0.0:8080"
+      - "--llama-checkpoint-path"
+      - "checkpoints/openaudio-s1-mini"
+      - "--decoder-checkpoint-path"
+      - "checkpoints/openaudio-s1-mini/codec.pth"
+      - "--decoder-config-name"
+      - "modded_dac_vq"
+    volumes:
+      - fish_models:/app/checkpoints   # кэш весов модели
+    ports:
+      - "8081:8080"   # наружу, чтобы можно было дёрнуть сервер напрямую
+    healthcheck:
+      # порт открыт = сервер поднялся (без привязки к конкретным эндпоинтам)
+      test: ["CMD", "python3", "-c",
+             "import socket,sys; s=socket.socket(); sys.exit(0 if s.connect_ex(('localhost',8080))==0 else 1)"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 300s   # загрузка модели + компиляция ядер
+    depends_on:
+      fish-pull:
+        condition: service_completed_successfully
+    restart: unless-stopped
+    # GPU для контейнера. Если GPU нет — используйте make fish-cpu.
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+
+  # ── Веб-киоск: голос через сервер Fish Speech ────────────────────
+  web:
+    build:
+      args:
+        WITH_TTS: "1"
+        # ставим в образ Silero — локальный фолбэк на время прогрева Fish
+        TTS_ENGINE: "fishaudio"
+    environment:
+      TTS_ENGINE: "fishaudio"
+      FISH_API_URL: "http://fish-speech:8080"
+      # Образец голоса для клонирования (отправляется на сервер по HTTP)
+      FISH_REF_AUDIO: "${FISH_REF_AUDIO:-/app/assets/voice/reference.mp3}"
+      FISH_REF_TEXT_FILE: "${FISH_REF_TEXT_FILE:-/app/assets/voice/reference.txt}"
+      # «Живость» голоса: больше temperature/top_p — выразительнее, но менее
+      # стабильно; меньше — ровнее и предсказуемее.
+      FISH_TEMPERATURE: "${FISH_TEMPERATURE:-0.7}"
+      FISH_TOP_P: "${FISH_TOP_P:-0.7}"
+      FISH_REP_PENALTY: "${FISH_REP_PENALTY:-1.2}"
+      FISH_TIMEOUT: "${FISH_TIMEOUT:-60}"
+    depends_on:
+      fish-speech:
+        condition: service_healthy
+
+volumes:
+  fish_models:
+    driver: local

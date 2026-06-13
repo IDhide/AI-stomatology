@@ -38,17 +38,22 @@ services:
       start_period: 5s
     restart: unless-stopped
 
-  # ── Веб-киоск (визуал + сценарий) ────────────────────────────────
+  # ── Веб-киоск (голос + визуал, мозг — правила) ───────────────────
   web:
     build:
       context: .
       dockerfile: Dockerfile
       target: web
+      args:
+        # WITH_STT=1 → встроить серверное распознавание речи (для Firefox).
+        # Включить:  WITH_STT=1 docker compose -f docker-compose.demo.yml up --build
+        WITH_STT: "${WITH_STT:-0}"
     image: smile-ai:web
     container_name: smile-web
     command: ["python", "-m", "src.web.server", "--host", "0.0.0.0", "--port", "8080"]
     environment:
       DIKIDI_BASE_URL: "http://dikidi-sim:8089"   # общение между контейнерами
+      STT_MODEL: "${STT_MODEL:-small}"            # tiny|base|small|medium
       PYTHONUNBUFFERED: "1"
     ports:
       - "8080:8080"

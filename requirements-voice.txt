@@ -1,0 +1,12 @@
+# Голосовые движки на сервере (опционально). Ставится поверх requirements.txt:
+#   pip install -r requirements-voice.txt
+#
+# faster-whisper — распознавание речи (для Firefox/без Web Speech API).
+#   Тянет ctranslate2 + onnxruntime + av (PyAV со встроенным ffmpeg),
+#   системный ffmpeg не нужен. Модель скачивается при первом запросе
+#   (≈150 МБ для 'base', ≈0.5 ГБ для 'small'). Размер: env STT_MODEL.
+#
+# piper-tts — синтез речи (локальный, приватный, одинаковый во всех браузерах).
+#   Тянет onnxruntime. Голос (~63 МБ) скачивается при первом запросе.
+faster-whisper>=1.0.0
+piper-tts>=1.2.0

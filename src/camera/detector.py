@@ -1,93 +1,178 @@
 """
-Детекция присутствия человека через камеру
+detector.py
+===========
+Серверная детекция присутствия человека через RTSP-камеру.
+
+Поддерживает:
+  • USB-камеру (device_index, по умолчанию 0)
+  • RTSP-поток (Xiaomi C200 через go2rtc, любая IP-камера)
+
+Детекция — OpenCV Haar cascade (лёгкий, без GPU, <50 мс на кадр).
+При устойчивом обнаружении лица → колбэк on_person_detected.
+При уходе человека (нет лица N секунд) → колбэк on_person_left.
+
+Переменные окружения:
+  CAMERA_SOURCE     — RTSP URL или индекс USB-камеры (по умолчанию: не задано)
+  CAMERA_FPS        — частота анализа кадров (по умолчанию 5)
+  CAMERA_COOLDOWN   — секунд между повторными детекциями (по умолчанию 30)
+  CAMERA_LOST_AFTER — секунд без лица = «ушёл» (по умолчанию 5)
 """
-import cv2
-import mediapipe as mp
+from __future__ import annotations
+
+import os
+import time
+from collections.abc import Callable
+from threading import Thread
+
 from loguru import logger
 
+_detector_thread: Thread | None = None
+_stop_flag = False
+_status: dict = {"state": "off", "source": "", "error": ""}
 
-class PersonDetector:
-    """Детектор присутствия человека"""
 
-    def __init__(self, config):
-        self.config = config
+def _resolve_source() -> str | int | None:
+    src = os.getenv("CAMERA_SOURCE", "").strip()
+    if not src:
+        return None
+    if src.isdigit():
+        return int(src)
+    return src
 
-        # Инициализация камеры
-        self.cap = cv2.VideoCapture(config.device_index)
-        self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, config.resolution["width"])
-        self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, config.resolution["height"])
-        self.cap.set(cv2.CAP_PROP_FPS, config.fps)
 
-        if not self.cap.isOpened():
-            raise RuntimeError("Не удалось открыть камеру")
+def _run_loop(
+    source: str | int,
+    fps: float,
+    cooldown: float,
+    lost_after: float,
+    on_detected: Callable[[], None],
+    on_left: Callable[[], None],
+    on_status: Callable[[dict], None] | None = None,
+) -> None:
+    global _stop_flag, _status
+    try:
+        import cv2
+    except ImportError:
+        _status = {"state": "error", "source": str(source), "error": "opencv не установлен"}
+        if on_status:
+            on_status(_status)
+        logger.error("opencv-python-headless не установлен — камера не работает")
+        return
 
-        # Инициализация MediaPipe для детекции лиц
-        self.mp_face_detection = mp.solutions.face_detection
-        self.face_detection = self.mp_face_detection.FaceDetection(
-            model_selection=0,
-            min_detection_confidence=config.detection["face_confidence"]
+    cascade_path = cv2.data.haarcascades + "haarcascade_frontalface_default.xml"
+    face_cascade = cv2.CascadeClassifier(cascade_path)
+
+    _status = {"state": "connecting", "source": str(source), "error": ""}
+    if on_status:
+        on_status(_status)
+    logger.info(f"Камера: подключаюсь к {source}…")
+    # Не сдаёмся сразу: поток может появиться позже (например, после
+    # настройки камеры в веб-интерфейсе go2rtc) — повторяем каждые 5 с.
+    cap = cv2.VideoCapture(source)
+    while not cap.isOpened() and not _stop_flag:
+        _status = {"state": "error", "source": str(source),
+                   "error": "поток недоступен, повтор через 5с"}
+        if on_status:
+            on_status(_status)
+        logger.error(f"Камера: не удалось открыть {source}, повтор через 5с…")
+        cap.release()
+        time.sleep(5)
+        cap = cv2.VideoCapture(source)
+    if _stop_flag:
+        cap.release()
+        return
+    _status = {"state": "connected", "source": str(source), "error": ""}
+    if on_status:
+        on_status(_status)
+    logger.success(f"Камера: подключена ({source})")
+
+    person_present = False
+    last_face_time = 0.0
+    last_trigger_time = 0.0
+    frame_interval = 1.0 / max(fps, 1)
+
+    while not _stop_flag:
+        time.sleep(frame_interval)
+        ret, frame = cap.read()
+        if not ret:
+            _status = {"state": "reconnecting", "source": str(source), "error": "потеря кадра"}
+            if on_status:
+                on_status(_status)
+            logger.warning("Камера: не удалось прочитать кадр, переподключение…")
+            cap.release()
+            time.sleep(2)
+            cap = cv2.VideoCapture(source)
+            if cap.isOpened():
+                _status = {"state": "connected", "source": str(source), "error": ""}
+                if on_status:
+                    on_status(_status)
+            continue
+
+        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        faces = face_cascade.detectMultiScale(
+            gray, scaleFactor=1.3, minNeighbors=5, minSize=(80, 80)
         )
 
-        # Для детекции движения
-        self.prev_frame = None
-        self.motion_threshold = config.detection["motion_threshold"]
+        now = time.monotonic()
 
-        logger.success("Камера инициализирована")
+        if len(faces) > 0:
+            last_face_time = now
+            if not person_present and (now - last_trigger_time) > cooldown:
+                person_present = True
+                last_trigger_time = now
+                logger.info("Камера: человек обнаружен")
+                try:
+                    on_detected()
+                except Exception:
+                    logger.exception("on_detected callback error")
+        else:
+            if person_present and (now - last_face_time) > lost_after:
+                person_present = False
+                logger.info("Камера: человек ушёл")
+                try:
+                    on_left()
+                except Exception:
+                    logger.exception("on_left callback error")
 
-    def detect_person(self) -> bool:
-        """
-        Определяет наличие человека перед камерой
-        Использует детекцию лица + детекцию движения
-        """
-        ret, frame = self.cap.read()
-        if not ret:
-            logger.warning("Не удалось получить кадр с камеры")
-            return False
+    cap.release()
+    _status = {"state": "off", "source": str(source), "error": ""}
+    if on_status:
+        on_status(_status)
+    logger.info("Камера: остановлена")
 
-        # Детекция лица
-        rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        results = self.face_detection.process(rgb_frame)
 
-        if results.detections:
-            logger.debug(f"Обнаружено лиц: {len(results.detections)}")
-            return True
-
-        # Дополнительная детекция движения
-        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-        gray = cv2.GaussianBlur(gray, (21, 21), 0)
-
-        if self.prev_frame is None:
-            self.prev_frame = gray
-            return False
-
-        frame_delta = cv2.absdiff(self.prev_frame, gray)
-        thresh = cv2.threshold(frame_delta, 25, 255, cv2.THRESH_BINARY)[1]
-        motion_pixels = cv2.countNonZero(thresh)
-
-        self.prev_frame = gray
-
-        # Если много движения - возможно человек
-        if motion_pixels > self.motion_threshold * 1000:
-            logger.debug(f"Обнаружено движение: {motion_pixels} пикселей")
-            return True
-
+def start(
+    on_detected: Callable[[], None],
+    on_left: Callable[[], None],
+    on_status: Callable[[dict], None] | None = None,
+) -> bool:
+    """Запустить детекцию в фоновом потоке. Возвращает True если камера настроена."""
+    global _detector_thread, _stop_flag
+    source = _resolve_source()
+    if source is None:
+        logger.info("Камера: CAMERA_SOURCE не задан — детекция отключена")
         return False
 
-    # Алиас для совместимости со старым кодом
-    def detect_presence(self) -> bool:
-        return self.detect_person()
+    fps = float(os.getenv("CAMERA_FPS", "5"))
+    cooldown = float(os.getenv("CAMERA_COOLDOWN", "30"))
+    lost_after = float(os.getenv("CAMERA_LOST_AFTER", "5"))
 
-    def get_frame(self):
-        """Получить текущий кадр с камеры"""
-        ret, frame = self.cap.read()
-        return frame if ret else None
+    _stop_flag = False
+    _detector_thread = Thread(
+        target=_run_loop,
+        args=(source, fps, cooldown, lost_after, on_detected, on_left, on_status),
+        daemon=True,
+        name="camera-detector",
+    )
+    _detector_thread.start()
+    return True
 
-    def cleanup(self):
-        """Освобождение ресурсов"""
-        if self.cap:
-            self.cap.release()
-        logger.info("Камера освобождена")
+
+def get_status() -> dict:
+    return dict(_status)
 
 
-# Имя, под которым main_offline.py ожидает класс
-CameraDetector = PersonDetector
+def stop() -> None:
+    global _stop_flag, _status
+    _stop_flag = True
+    _status = {"state": "off", "source": _status.get("source", ""), "error": ""}

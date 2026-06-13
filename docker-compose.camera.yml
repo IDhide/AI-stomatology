@@ -1,0 +1,47 @@
+# ════════════════════════════════════════════════════════════════════
+#  Smile.AI — НАДСТРОЙКА «камера» (детекция пациентов)
+#
+#  Добавляет к стенду:
+#    • go2rtc — RTSP-мост для Wi-Fi камер (Xiaomi C200 и др.)
+#    • OpenCV в веб-киоске — детекция лиц (Haar cascade, без GPU)
+#
+#  При обнаружении лица Оливия автоматически приветствует пациента
+#  и спрашивает имя. Работает с любой RTSP/USB-камерой.
+#
+#  Перед запуском:
+#    1. Если config/go2rtc.yaml ещё нет:
+#         cp config/go2rtc.example.yaml config/go2rtc.yaml
+#    2. Запустите:  make camera  (или make smart-camera / make full)
+#    3. Настройте камеру через веб-интерфейс go2rtc (он сам получит токен):
+#         • откройте http://localhost:1984
+#         • Add → Xiaomi → войдите по email/паролю аккаунта Mi Home
+#         • назовите поток ровно:  xiaomi_c200
+#       Подробности — в config/go2rtc.example.yaml.
+# ════════════════════════════════════════════════════════════════════
+
+services:
+
+  # ── go2rtc: RTSP-мост для Wi-Fi камер ───────────────────────────
+  go2rtc:
+    image: alexxit/go2rtc:latest
+    container_name: smile-go2rtc
+    volumes:
+      # rw (не :ro!) — веб-интерфейс go2rtc сам сохраняет сюда токен Mi Cloud
+      - ./config/go2rtc.yaml:/config/go2rtc.yaml
+    ports:
+      - "1984:1984"     # Web UI (просмотр потока в браузере)
+      - "8554:8554"     # RTSP-выход
+    restart: unless-stopped
+
+  # ── Веб-киоск: добавляем OpenCV + камеру ────────────────────────
+  web:
+    build:
+      args:
+        WITH_CAMERA: "1"
+    environment:
+      CAMERA_SOURCE: "${CAMERA_SOURCE:-rtsp://go2rtc:8554/xiaomi_c200}"
+      CAMERA_FPS: "${CAMERA_FPS:-5}"
+      CAMERA_COOLDOWN: "${CAMERA_COOLDOWN:-30}"
+      CAMERA_LOST_AFTER: "${CAMERA_LOST_AFTER:-5}"
+    depends_on:
+      - go2rtc

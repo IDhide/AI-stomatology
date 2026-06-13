@@ -1,0 +1,104 @@
+# ════════════════════════════════════════════════════════════════════
+#  Smile.AI — Fish Speech на CPU (без GPU)
+#
+#  Тот же живой голос, но синтез на CPU. Заметно медленнее, чем на GPU
+#  (несколько секунд на реплику) — годится для проверки/демо без видеокарты.
+#  Если есть GPU — используйте `make fish` (намного быстрее).
+#
+#  Используем официальный server-образ server-cpu: он сам поднимает
+#  API-сервер синтеза на порту 8080. Веса качаются разово init-контейнером.
+#
+#  Запуск:  make fish-cpu
+# ════════════════════════════════════════════════════════════════════
+
+services:
+
+  # ── Разовая загрузка весов модели в общий том ────────────────────
+  fish-pull:
+    image: python:3.11-slim
+    container_name: smile-fish-pull
+    environment:
+      # Модель fishaudio/openaudio-s1-mini — gated: нужен токен HF (см. .env).
+      HF_TOKEN: "${HF_TOKEN:-}"
+    volumes:
+      - fish_models:/app/checkpoints
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        set -e
+        CKPT=/app/checkpoints/openaudio-s1-mini
+        pip install -q huggingface_hub
+        if [ -z "$$HF_TOKEN" ]; then
+          echo "──────────────────────────────────────────────────────────"
+          echo "⚠ HF_TOKEN не задан, а модель openaudio-s1-mini — закрытая."
+          echo "  1) откройте https://huggingface.co/fishaudio/openaudio-s1-mini"
+          echo "     и нажмите «Agree and access repository»"
+          echo "  2) создайте токен (read): https://huggingface.co/settings/tokens"
+          echo "  3) пропишите HF_TOKEN=hf_xxx в файл .env и перезапустите"
+          echo "──────────────────────────────────────────────────────────"
+        fi
+        # snapshot_download инкрементальный: докачивает недостающие файлы и
+        # пропускает готовые — чинит и неполную загрузку из прошлых попыток.
+        echo "Fish Speech: проверяю и докачиваю веса OpenAudio S1-mini…"
+        if python -c "from huggingface_hub import snapshot_download; snapshot_download('fishaudio/openaudio-s1-mini', local_dir='$$CKPT')"; then
+          echo "Fish Speech: веса готовы"
+        elif [ -f "$$CKPT/config.json" ] && [ -f "$$CKPT/codec.pth" ]; then
+          echo "Fish Speech: HF недоступен, но веса уже в кэше — продолжаю"
+        else
+          echo "Fish Speech: не удалось скачать веса (проверьте HF_TOKEN и доступ к модели)"
+          exit 1
+        fi
+    restart: "no"
+
+  # ── Сервер Fish Speech на CPU (без блока deploy.resources) ────────
+  fish-speech:
+    image: fishaudio/fish-speech:server-cpu
+    container_name: smile-fish
+    # По умолчанию server-образ грузит тяжёлую s2-pro. Указываем серверу нашу
+    # лёгкую openaudio-s1-mini. ВАЖНО: entrypoint ждёт ПЕРВЫМ аргументом адрес.
+    command:
+      - "0.0.0.0:8080"
+      - "--llama-checkpoint-path"
+      - "checkpoints/openaudio-s1-mini"
+      - "--decoder-checkpoint-path"
+      - "checkpoints/openaudio-s1-mini/codec.pth"
+      - "--decoder-config-name"
+      - "modded_dac_vq"
+    volumes:
+      - fish_models:/app/checkpoints
+    ports:
+      - "8081:8080"
+    healthcheck:
+      test: ["CMD", "python3", "-c",
+             "import socket,sys; s=socket.socket(); sys.exit(0 if s.connect_ex(('localhost',8080))==0 else 1)"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 600s   # на CPU прогрев дольше
+    depends_on:
+      fish-pull:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
+  # ── Веб-киоск: голос через сервер Fish Speech ────────────────────
+  web:
+    build:
+      args:
+        WITH_TTS: "1"
+        TTS_ENGINE: "fishaudio"
+    environment:
+      TTS_ENGINE: "fishaudio"
+      FISH_API_URL: "http://fish-speech:8080"
+      FISH_REF_AUDIO: "${FISH_REF_AUDIO:-/app/assets/voice/reference.mp3}"
+      FISH_REF_TEXT_FILE: "${FISH_REF_TEXT_FILE:-/app/assets/voice/reference.txt}"
+      FISH_TEMPERATURE: "${FISH_TEMPERATURE:-0.7}"
+      FISH_TOP_P: "${FISH_TOP_P:-0.7}"
+      FISH_REP_PENALTY: "${FISH_REP_PENALTY:-1.2}"
+      FISH_TIMEOUT: "${FISH_TIMEOUT:-120}"
+    depends_on:
+      fish-speech:
+        condition: service_healthy
+
+volumes:
+  fish_models:
+    driver: local
