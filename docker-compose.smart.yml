@@ -103,6 +103,10 @@ services:
       PIPER_VOICE_DIR: "/app/models/piper"
       # Кэш модели ударений RUAccent (в томе silero, чтобы не качать каждый раз)
       HF_HOME: "${HF_HOME:-/app/models/silero/hf}"
+      # Простановка ударений RUAccent: 0 — выключить (откат на акцентор Silero)
+      RUACCENT_ENABLED: "${RUACCENT_ENABLED:-1}"
+      RUACCENT_MODEL: "${RUACCENT_MODEL:-turbo3.1}"
+      RUACCENT_TINY: "${RUACCENT_TINY:-0}"
       PYTHONUNBUFFERED: "1"
     volumes:
       - ./data:/app/data
