@@ -105,6 +105,7 @@ services:
     volumes:
       - ./data:/app/data
       - ./assets:/app/assets
+      - ./config:/app/config   # промпты/персона — правки без пересборки (нужен restart)
       - silero_voices:/app/models/silero   # кэш модели Silero
       - piper_voices:/app/models/piper     # кэш голосовых моделей Piper
     depends_on:
