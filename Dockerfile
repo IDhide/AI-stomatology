@@ -56,9 +56,9 @@ RUN if [ "$WITH_TTS" = "1" ] && { [ "$TTS_ENGINE" = "silero" ] || [ "$TTS_ENGINE
 RUN if [ "$WITH_TTS" = "1" ] && [ "$TTS_ENGINE" = "piper" ]; then \
       uv pip install --python .venv/bin/python "piper-tts>=1.2.0"; \
     fi
-# Клонирование голоса (Qwen3-TTS-VC) — нужен GPU/CUDA. torch CUDA + qwen-tts.
-# sox нужен qwen-tts для обработки аудио.
-RUN if [ "$WITH_TTS" = "1" ] && [ "$TTS_ENGINE" = "qwen3vc" ]; then \
+# Qwen3-TTS — нужен GPU/CUDA. torch CUDA + qwen-tts. sox для обработки аудио.
+# Движок qwen (CustomVoice, готовые тембры) и qwen3vc (клонирование) — один пакет.
+RUN if [ "$WITH_TTS" = "1" ] && { [ "$TTS_ENGINE" = "qwen" ] || [ "$TTS_ENGINE" = "qwen3vc" ]; }; then \
       apt-get update -q && apt-get install -y --no-install-recommends sox libsox-fmt-all && \
       rm -rf /var/lib/apt/lists/* && \
       uv pip install --python .venv/bin/python \
@@ -83,7 +83,7 @@ RUN if [ "$WITH_TTS" = "1" ] && [ "$TTS_ENGINE" = "xtts" ]; then \
 # RUAccent — точная нейросетевая простановка ударений для Silero (ставим везде,
 # где может работать Silero: silero/fishaudio-фолбэк/silero внутри xtts-образа).
 # Модель ударений скачивается при первом запуске; кэшируется через HF_HOME.
-RUN if [ "$WITH_TTS" = "1" ] && { [ "$TTS_ENGINE" = "silero" ] || [ "$TTS_ENGINE" = "fishaudio" ] || [ "$TTS_ENGINE" = "xtts" ]; }; then \
+RUN if [ "$WITH_TTS" = "1" ] && { [ "$TTS_ENGINE" = "silero" ] || [ "$TTS_ENGINE" = "fishaudio" ] || [ "$TTS_ENGINE" = "xtts" ] || [ "$TTS_ENGINE" = "qwen" ] || [ "$TTS_ENGINE" = "qwen3vc" ]; }; then \
       uv pip install --python .venv/bin/python "ruaccent>=1.5.8"; \
     fi
 

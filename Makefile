@@ -46,10 +46,10 @@ smart-webcam: ## Умный стенд + USB-вебка (Ollama + детекци
 webcam-down: ## Остановить стенд с USB-вебкой
 	$(COMPOSE_DEMO) -f docker-compose.webcam.yml down
 
-qwen: ## Умный стенд + клонированный голос (Qwen3-TTS-VC, нужен GPU + assets/voice)
+qwen: ## Умный стенд + Qwen3-TTS (лучший русский голос, готовые тембры, нужен GPU)
 	$(COMPOSE_DEMO) -f docker-compose.smart.yml -f docker-compose.qwen.yml up --build
 
-qwen-down: ## Остановить стенд с клонированным голосом
+qwen-down: ## Остановить стенд с голосом Qwen3-TTS
 	$(COMPOSE_DEMO) -f docker-compose.smart.yml -f docker-compose.qwen.yml down
 
 fish: ## Умный стенд + ЖИВОЙ голос Fish Speech (GPU, лучшее качество, assets/voice)

@@ -14,8 +14,12 @@ tts.py
               русский язык, клонирование из 10-сек референса. Рекомендуется
               для киоска на 3060/Ryzen 5. Лицензия CPML (non-commercial —
               уточните у Coqui для коммерческого использования).
+  • qwen     — Qwen3-TTS CustomVoice (1.7B, открытые веса, GPU ~8–12 ГБ VRAM).
+              Лучшее качество русского на сегодня, готовые тембры БЕЗ образца
+              голоса. Тембр — QWEN_SPEAKER. Рекомендуется для RTX 3060 12 ГБ.
+              Apache 2.0. Ударения определяет сама модель (не RUAccent).
   • qwen3vc — КЛОНИРОВАНИЕ голоса (Qwen3-TTS-VC, 1.7B, ~4 ГБ VRAM). Высокое
-              качество, но тяжёлый и медленный холодный старт. Apache 2.0.
+              качество, но нужен образец голоса + расшифровка. Apache 2.0.
   • silero  — естественный человеческий женский голос (по умолчанию).
               Русские голоса Silero v4 (baya/xenia/kseniya), CPU, локально.
   • piper    — лёгкий запасной движок (ru_RU/irina), если нет torch.
@@ -25,7 +29,7 @@ tts.py
 одинаковый красивый голос в любом браузере.
 
 Переменные окружения:
-  TTS_ENGINE          — fishaudio | xtts | qwen3vc | silero | piper
+  TTS_ENGINE          — fishaudio | xtts | qwen | qwen3vc | silero | piper
                         (по умолчанию silero)
   ── Fish Speech / OpenAudio (клонирование голоса, локальный сервер) ──
   FISH_API_URL        — адрес локального сервера Fish Speech
@@ -42,6 +46,13 @@ tts.py
   XTTS_DEVICE         — cuda | cpu (по умолчанию: cuda если доступна, иначе cpu)
   XTTS_LANGUAGE       — язык (по умолчанию ru)
   XTTS_MODEL_DIR      — куда скачать модель (~1.8 ГБ)
+  ── Qwen3-TTS CustomVoice (готовые тембры, GPU) ──
+  QWEN_SPEAKER        — тембр: Vivian | Serena | Ono_Anna | Sohee (женские),
+                        Ryan | Aiden | Uncle_Fu | Dylan | Eric (мужские)
+                        (по умолчанию Vivian — женский)
+  QWEN_LANGUAGE       — язык речи (по умолчанию Russian)
+  QWEN_DEVICE         — cuda:0 | cpu (по умолчанию cuda:0)
+  QWEN_ATTN           — sdpa | flash_attention_2 | eager (по умолчанию sdpa)
   ── Qwen3-TTS-VC (клонирование голоса, GPU) ──
   QWEN_REF_AUDIO      — путь к образцу голоса (wav/mp3, 10–15 с чистой речи)
   QWEN_REF_TEXT       — точная расшифровка образца (что произнесено в нём)
@@ -426,6 +437,97 @@ def _qwen_synthesize(text: str) -> tuple[bytes, str | None]:
 
 
 # ════════════════════════════════════════════════════════════════════
+#  Qwen3-TTS CustomVoice — готовые тембры (без образца), GPU
+# ════════════════════════════════════════════════════════════════════
+#  Открытые веса Qwen3-TTS-12Hz-1.7B-CustomVoice: топовое качество русского,
+#  десятки тембров «из коробки». Не требует образца голоса — выбираем тембр
+#  (QWEN_SPEAKER) и язык (QWEN_LANGUAGE). На RTX 3060 12 ГБ 1.7B помещается.
+_qwen_cv_model = None
+_qwen_cv_error: str | None = None
+
+# Женские тембры из набора Qwen3-TTS (язык тембра ≠ язык речи — модель
+# говорит по-русски любым тембром). Мужские: Uncle_Fu, Dylan, Eric, Ryan, Aiden.
+_QWEN_CV_FEMALE = ("Vivian", "Serena", "Ono_Anna", "Sohee")
+
+
+def _get_qwen_cv():
+    """Ленивая загрузка Qwen3-TTS CustomVoice (готовые тембры, без образца)."""
+    global _qwen_cv_model, _qwen_cv_error
+    if _qwen_cv_model is not None:
+        return _qwen_cv_model
+    if _qwen_cv_error is not None:
+        return None
+
+    try:
+        import torch  # type: ignore
+        from qwen_tts import Qwen3TTSModel  # type: ignore
+    except Exception as e:
+        _qwen_cv_error = f"qwen-tts/torch не установлены ({e})"
+        logger.warning(f"TTS Qwen недоступен: {_qwen_cv_error}. Установите: pip install qwen-tts")
+        return None
+
+    model_name = os.getenv("QWEN_TTS_MODEL", "Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice")
+    device = os.getenv("QWEN_DEVICE", "cuda:0")
+    attn = os.getenv("QWEN_ATTN", "sdpa")  # sdpa не требует сборки flash-attn
+    dtype = torch.bfloat16 if "cuda" in device else torch.float32
+
+    # Цепочка попыток: выбранный attn → eager (минимум памяти) при сбое/OOM.
+    attempts = [attn]
+    if attn != "eager":
+        attempts.append("eager")
+
+    last_exc: Exception | None = None
+    for attempt_attn in attempts:
+        try:
+            logger.info(f"TTS: загружаю Qwen3-TTS CustomVoice {model_name} "
+                        f"({device}, attn={attempt_attn})…")
+            _qwen_cv_model = Qwen3TTSModel.from_pretrained(
+                model_name, device_map=device, dtype=dtype,
+                attn_implementation=attempt_attn,
+            )
+            break
+        except Exception as e:
+            last_exc = e
+            logger.warning(f"Qwen CustomVoice: загрузка с attn={attempt_attn} не удалась ({e})")
+            _free_cuda()
+
+    if _qwen_cv_model is None:
+        _qwen_cv_error = f"не удалось загрузить Qwen3-TTS CustomVoice ({last_exc})"
+        logger.error(f"TTS: {_qwen_cv_error}")
+        return None
+
+    logger.success(f"TTS готов (Qwen3-TTS CustomVoice — тембр "
+                   f"{os.getenv('QWEN_SPEAKER', 'Vivian')})")
+    return _qwen_cv_model
+
+
+def _qwen_cv_synthesize(text: str) -> tuple[bytes, str | None]:
+    model = _get_qwen_cv()
+    if model is None:
+        return b"", _qwen_cv_error or "qwen_unavailable"
+    import numpy as np
+
+    language = os.getenv("QWEN_LANGUAGE", "Russian").strip() or "Russian"
+    speaker = os.getenv("QWEN_SPEAKER", "Vivian").strip() or "Vivian"
+    try:
+        wavs, sr = model.generate_custom_voice(
+            text=text, language=language, speaker=speaker,
+        )
+        wav = np.asarray(wavs[0], dtype="float32")
+        pcm16 = (np.clip(wav, -1.0, 1.0) * 32767).astype("<i2")
+        buf = io.BytesIO()
+        with wave.open(buf, "wb") as wf:
+            wf.setnchannels(1)
+            wf.setsampwidth(2)
+            wf.setframerate(int(sr))
+            wf.writeframes(pcm16.tobytes())
+        return buf.getvalue(), None
+    except Exception as e:
+        logger.exception("Qwen CustomVoice synthesize error")
+        return b"", f"synth_failed: {e}"
+
+
+# ════════════════════════════════════════════════════════════════════
 #  Silero — естественный женский голос
 # ════════════════════════════════════════════════════════════════════
 _silero_model = None
@@ -654,6 +756,7 @@ def engine_info() -> dict:
         "loaded": {
             "fishaudio": _fish_error is None and _engine() == "fishaudio",
             "xtts": _xtts_model is not None,
+            "qwen": _qwen_cv_model is not None,
             "qwen3vc": _qwen_model is not None,
             "silero": _silero_model is not None,
             "piper": _piper_voice is not None,
@@ -661,6 +764,7 @@ def engine_info() -> dict:
         "errors": {
             "fishaudio": _fish_error,
             "xtts": _xtts_error,
+            "qwen": _qwen_cv_error,
             "qwen3vc": _qwen_error,
             "silero": _silero_error,
             "piper": _piper_error,
@@ -674,6 +778,8 @@ def is_available() -> bool:
     if eng == "fishaudio" and _fish_health():
         return True
     if eng == "xtts" and _get_xtts() is not None:
+        return True
+    if eng == "qwen" and _get_qwen_cv() is not None:
         return True
     if eng == "qwen3vc" and _get_qwen() is not None:
         return True
@@ -714,6 +820,16 @@ def synthesize(text: str) -> tuple[bytes, str | None]:
         if not err:
             return audio, None
         logger.warning(f"TTS: XTTS упал ({err}), фолбэк → Silero")
+        audio, err2 = _silero_synthesize(text)
+        if not err2:
+            return audio, None
+        return _piper_synthesize(text)
+
+    if eng == "qwen":
+        audio, err = _qwen_cv_synthesize(text)
+        if not err:
+            return audio, None
+        logger.warning(f"TTS: Qwen CustomVoice упал ({err}), фолбэк → Silero")
         audio, err2 = _silero_synthesize(text)
         if not err2:
             return audio, None
