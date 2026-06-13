@@ -498,21 +498,22 @@ def _xml_escape(s: str) -> str:
     return s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
 
-def _silero_say(model, text, speaker, sample_rate, rate):
+def _silero_say(model, text, speaker, sample_rate, rate, put_accent=True, put_yo=True):
     """Один вызов Silero. При заданном SILERO_RATE — через SSML (мягче/медленнее
-    для ASMR-подачи), с безопасным откатом на обычный синтез."""
+    для ASMR-подачи), с безопасным откатом на обычный синтез. put_accent=False,
+    если ударения уже расставлены RUAccent."""
     if rate:
         ssml = f'<speak><prosody rate="{rate}">{_xml_escape(text)}</prosody></speak>'
         try:
             return model.apply_tts(
                 ssml_text=ssml, speaker=speaker, sample_rate=sample_rate,
-                put_accent=True, put_yo=True,
+                put_accent=put_accent, put_yo=put_yo,
             )
         except Exception:
             pass  # SSML не поддержан — обычный путь ниже
     return model.apply_tts(
         text=text, speaker=speaker, sample_rate=sample_rate,
-        put_accent=True, put_yo=True,
+        put_accent=put_accent, put_yo=put_yo,
     )
 
 
@@ -526,10 +527,19 @@ def _silero_synthesize(text: str) -> tuple[bytes, str | None]:
     sample_rate = int(os.getenv("SILERO_SAMPLE_RATE", "48000") or 48000)
     rate = os.getenv("SILERO_RATE", "").strip()  # напр. slow / x-slow / 90%
 
+    # Точные ударения через RUAccent. Получилось — отдаём Silero готовый текст
+    # с «+» перед ударными и «ё»; не получилось — встроенный акцентор Silero.
+    from .accent import accentize
+    accented = accentize(text)
+    if accented:
+        src_text, put_accent, put_yo = accented, False, False
+    else:
+        src_text, put_accent, put_yo = text, True, True
+
     try:
         chunks = []
-        for piece in _split_for_silero(text):
-            audio = _silero_say(model, piece, speaker, sample_rate, rate)
+        for piece in _split_for_silero(src_text):
+            audio = _silero_say(model, piece, speaker, sample_rate, rate, put_accent, put_yo)
             chunks.append(audio.numpy())
         wav = np.concatenate(chunks) if len(chunks) > 1 else chunks[0]
         pcm16 = (np.clip(wav, -1.0, 1.0) * 32767).astype("<i2")

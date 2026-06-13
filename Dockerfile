@@ -80,6 +80,13 @@ RUN if [ "$WITH_TTS" = "1" ] && [ "$TTS_ENGINE" = "xtts" ]; then \
         "transformers>=4.57,<5" "coqui-tts"; \
     fi
 
+# RUAccent — точная нейросетевая простановка ударений для Silero (ставим везде,
+# где может работать Silero: silero/fishaudio-фолбэк/silero внутри xtts-образа).
+# Модель ударений скачивается при первом запуске; кэшируется через HF_HOME.
+RUN if [ "$WITH_TTS" = "1" ] && { [ "$TTS_ENGINE" = "silero" ] || [ "$TTS_ENGINE" = "fishaudio" ] || [ "$TTS_ENGINE" = "xtts" ]; }; then \
+      uv pip install --python .venv/bin/python "ruaccent>=1.5.8"; \
+    fi
+
 # Опционально — детекция лиц камерой (OpenCV, ~50 МБ)
 ARG WITH_CAMERA=0
 RUN if [ "$WITH_CAMERA" = "1" ]; then \

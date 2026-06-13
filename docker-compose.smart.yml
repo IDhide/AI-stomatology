@@ -101,6 +101,8 @@ services:
       SILERO_RATE: "${SILERO_RATE:-}"
       SILERO_MODEL_DIR: "/app/models/silero"
       PIPER_VOICE_DIR: "/app/models/piper"
+      # Кэш модели ударений RUAccent (в томе silero, чтобы не качать каждый раз)
+      HF_HOME: "${HF_HOME:-/app/models/silero/hf}"
       PYTHONUNBUFFERED: "1"
     volumes:
       - ./data:/app/data
