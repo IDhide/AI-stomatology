@@ -35,7 +35,7 @@ from ..dental.faq import lookup_faq
 from ..dental.humor import maybe_joke
 from ..dental.intents import Intent, classify_intent
 from ..dental.triage import Urgency, triage
-from .tools import ToolDispatcher, extract_tool_calls, render_tools_for_prompt
+from .tools import ToolDispatcher, extract_tool_calls
 
 
 @dataclass

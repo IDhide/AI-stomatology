@@ -828,7 +828,7 @@ def is_available() -> bool:
 # ── Кэш готовых WAV ────────────────────────────────────────────────
 # Киоск повторяет одни и те же фразы (приветствие, прощание, «назовите имя…»).
 # Кэшируем синтез по тексту — повтор отдаётся мгновенно, без работы GPU.
-_WAV_CACHE: "OrderedDict[str, bytes]" = OrderedDict()
+_WAV_CACHE: OrderedDict[str, bytes] = OrderedDict()
 _WAV_CACHE_MAX = int(os.getenv("TTS_CACHE_SIZE", "256") or 256)
 _wav_cache_lock = threading.Lock()
 

@@ -64,9 +64,9 @@
     wctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   }
 
-  // Концентрические волны, расходящиеся из центра круга (как у голосового
-  // ассистента). Когда Оливия говорит — волны ярче и быстрее по амплитуде
-  // речи; в остальных режимах спокойнее. Заменяет прежнюю «дугу».
+  // Мягкие концентрические волны, расходящиеся из центра (как у голосового
+  // ассистента на референсе): размытые светящиеся полосы, без резких колец.
+  // Когда Оливия говорит — ярче и быстрее по амплитуде речи; иначе спокойнее.
   function drawWave(t) {
     const r = wave.getBoundingClientRect();
     const W = r.width, H = r.height;
@@ -78,55 +78,43 @@
     // энергия и скорость волн зависят от режима
     let energy, speed;
     if (state.mode === "speaking") {
-      energy = 0.5 + state.ampSmooth * 0.9;   // ярче на громких местах речи
-      speed = 1.0 + state.ampSmooth * 0.8;
+      energy = 0.55 + state.ampSmooth * 0.7;  // ярче на громких местах речи
+      speed = 1.0 + state.ampSmooth * 0.7;
     } else if (state.mode === "listening") {
-      energy = 0.32; speed = 0.55;
+      energy = 0.40; speed = 0.60;
     } else if (state.mode === "thinking") {
-      energy = 0.20; speed = 0.35;
+      energy = 0.28; speed = 0.42;
     } else {
-      energy = 0.22; speed = 0.45;            // idle/greeting — лёгкое дыхание
+      energy = 0.32; speed = 0.50;            // idle/greeting — лёгкое дыхание
     }
 
-    const RINGS = 5;
-    const cycle = 4200 / speed;               // «жизнь» одной волны, мс
+    const RINGS = 6;
+    const cycle = 5200 / speed;               // «жизнь» одной волны, мс
+    const bandHalf = maxR * 0.30;             // ширина мягкой полосы (размытость)
 
     wctx.save();
     wctx.globalCompositeOperation = "lighter"; // волны светятся, складываясь
 
     for (let i = 0; i < RINGS; i++) {
-      // фаза 0..1: волна рождается в центре и уходит к краю
+      // фаза 0..1: волна рождается в центре и мягко уходит к краю
       const phase = ((t / cycle) + i / RINGS) % 1;
-      const wobble = state.mode === "speaking"
-        ? 1 + 0.06 * Math.sin(t / 90 + i) * state.ampSmooth : 1;
-      const rad = phase * maxR * wobble;
-      if (rad < 2) continue;
-      // яркость: ноль в центре и у края, максимум посередине пути
-      const fade = Math.sin(Math.PI * phase);
-      const alpha = Math.min(0.9, fade * energy);
-      if (alpha <= 0.01) continue;
+      const rad = phase * maxR * 0.92;
+      const fade = Math.sin(Math.PI * phase);  // ярче посередине пути
+      const a = Math.min(0.85, fade * energy * 0.5);
+      if (a <= 0.01) continue;
 
+      // мягкая размытая полоса: прозрачно → цвет → прозрачно
+      const inner = Math.max(0, rad - bandHalf);
+      const outer = rad + bandHalf;
+      const g = wctx.createRadialGradient(cx, cy, inner, cx, cy, outer);
+      g.addColorStop(0, "rgba(150, 110, 255, 0)");
+      g.addColorStop(0.5, `rgba(200, 170, 255, ${a})`);
+      g.addColorStop(1, "rgba(150, 110, 255, 0)");
+      wctx.fillStyle = g;
       wctx.beginPath();
-      wctx.arc(cx, cy, rad, 0, Math.PI * 2);
-      wctx.strokeStyle = `rgba(226, 212, 255, ${alpha})`;  // бело-фиолетовый
-      wctx.lineWidth = 2.4 * (0.6 + fade);
-      wctx.shadowColor = "rgba(180, 140, 255, 0.65)";
-      wctx.shadowBlur = 16;
-      wctx.stroke();
+      wctx.arc(cx, cy, outer, 0, Math.PI * 2);
+      wctx.fill();
     }
-    wctx.shadowBlur = 0;
-
-    // мягкое светящееся ядро в центре (пульсирует с речью)
-    const coreA = state.mode === "speaking"
-      ? 0.16 + 0.28 * state.ampSmooth : 0.10;
-    const core = wctx.createRadialGradient(cx, cy, 0, cx, cy, maxR * 0.55);
-    core.addColorStop(0, `rgba(242, 232, 255, ${coreA})`);
-    core.addColorStop(0.5, `rgba(200, 160, 255, ${coreA * 0.4})`);
-    core.addColorStop(1, "rgba(150, 110, 255, 0)");
-    wctx.fillStyle = core;
-    wctx.beginPath();
-    wctx.arc(cx, cy, maxR * 0.55, 0, Math.PI * 2);
-    wctx.fill();
 
     wctx.restore();
   }
