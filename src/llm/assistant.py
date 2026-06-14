@@ -24,6 +24,7 @@ import json
 import os
 import pathlib
 import random
+import re
 from dataclasses import dataclass
 from typing import Any
 
@@ -36,6 +37,36 @@ from ..dental.humor import maybe_joke
 from ..dental.intents import Intent, classify_intent
 from ..dental.triage import Urgency, triage
 from .tools import ToolDispatcher, extract_tool_calls
+
+# ── Женский род (страховка) ──────────────────────────────────────────
+# Оливия — женщина, но маленькая модель иногда сбивается на мужской род
+# («я понял», «рад», «готов», «записал»). Промпт это требует, а здесь —
+# гарантированная подчистка финального текста перед озвучкой.
+_FEM_WORDS = {
+    "рад": "рада", "готов": "готова", "должен": "должна", "уверен": "уверена",
+    "согласен": "согласна", "понял": "поняла", "записал": "записала",
+    "уточнил": "уточнила", "проверил": "проверила", "нашёл": "нашла",
+    "нашел": "нашла", "услышал": "услышала", "увидел": "увидела",
+    "рассказал": "рассказала", "предложил": "предложила", "помог": "помогла",
+    "сделал": "сделала", "хотел": "хотела", "смог": "смогла",
+}
+_FEM_RE = re.compile(r"\b(" + "|".join(map(re.escape, _FEM_WORDS)) + r")\b", re.I)
+# любой глагол прош. вр. сразу после «я»: «я <…>л» → «я <…>ла»
+_FEM_YA_RE = re.compile(r"\b(я\s+)([а-яё]+?)л\b", re.I)
+
+
+def _match_case(src: str, repl: str) -> str:
+    return repl.capitalize() if src[:1].isupper() else repl
+
+
+def feminize(text: str) -> str:
+    """Привести самоописание Оливии к женскому роду (не трогая 3-е лицо по
+    возможности): «я понял» → «я поняла», «рад» → «рада»."""
+    if not text:
+        return text
+    text = _FEM_YA_RE.sub(lambda m: m.group(1) + m.group(2) + "ла", text)
+    text = _FEM_RE.sub(lambda m: _match_case(m.group(0), _FEM_WORDS[m.group(0).lower()]), text)
+    return text
 
 
 @dataclass
@@ -253,6 +284,7 @@ class LLMAssistant:
 
     # ------------------------------------------------------------------
     def _with_optional_joke(self, text: str, intent: Intent, tri) -> str:
+        text = feminize(text)  # гарантируем женский род в финальном тексте
         if not self.enable_humor:
             return text
         joke = maybe_joke(
