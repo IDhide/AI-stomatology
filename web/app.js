@@ -89,20 +89,20 @@
 
     let energy, speed;
     if (state.mode === "speaking") {
-      energy = 0.50 + state.ampSmooth * 0.7;
-      speed = 1.0 + state.ampSmooth * 0.6;
+      energy = 0.34 + state.ampSmooth * 0.5;
+      speed = 0.9 + state.ampSmooth * 0.5;
     } else if (state.mode === "listening") {
-      energy = 0.32; speed = 0.60;
+      energy = 0.22; speed = 0.55;
     } else if (state.mode === "thinking") {
-      energy = 0.24; speed = 0.42;
+      energy = 0.16; speed = 0.40;
     } else {
-      energy = 0.30; speed = 0.50;            // greeting
+      energy = 0.20; speed = 0.46;            // greeting
     }
 
     const span = Math.min(W, H) * 0.46;       // насколько далеко уходят волны
-    const bandHalf = span * 0.28;             // ширина мягкой полосы
-    const RINGS = 5;
-    const cycle = 5200 / speed;
+    const bandHalf = span * 0.42;             // шире полоса = мягче, размытее
+    const RINGS = 4;
+    const cycle = 5600 / speed;
 
     actx.save();
     actx.globalCompositeOperation = "lighter";
@@ -110,8 +110,8 @@
       const phase = ((t / cycle) + i / RINGS) % 1;
       const rad = orbR + phase * span;        // от края шара — наружу
       const fade = Math.sin(Math.PI * phase); // ярче в середине пути, гаснет к краю
-      const a = Math.min(0.5, fade * energy * 0.42);
-      if (a <= 0.01) continue;
+      const a = Math.min(0.30, fade * energy * 0.30);
+      if (a <= 0.008) continue;
       const inner = Math.max(orbR * 0.7, rad - bandHalf);
       const outer = rad + bandHalf;
       const g = actx.createRadialGradient(cx, cy, inner, cx, cy, outer);
