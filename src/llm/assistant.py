@@ -69,6 +69,26 @@ def feminize(text: str) -> str:
     return text
 
 
+# ── Защита от «утечки» инструкций в ответ ────────────────────────────
+# Маленькая модель иногда дословно копирует куски системного промпта или
+# служебную подсказку в скобках. Вычищаем их из финального текста.
+_BRACKET_RE = re.compile(r"[\[(][^\])]*(служебн|urgency|specialty|priority|подсказк)[^\])]*[\])]", re.I)
+_LEAK_RE = re.compile(
+    r"\s*(—\s*)?\b(мягко об этом напомни(те)?|своими словами|без выдумок|"
+    r"без markdown|без сокращений|называй только отсюда|не лей воду)\b\.?",
+    re.I,
+)
+
+
+def sanitize(text: str) -> str:
+    """Убрать из ответа утёкшие инструкции и служебные пометки."""
+    if not text:
+        return text
+    text = _BRACKET_RE.sub("", text)
+    text = _LEAK_RE.sub("", text)
+    return re.sub(r"\s{2,}", " ", text).strip()
+
+
 @dataclass
 class AssistantConfig:
     base_url: str
@@ -284,7 +304,7 @@ class LLMAssistant:
 
     # ------------------------------------------------------------------
     def _with_optional_joke(self, text: str, intent: Intent, tri) -> str:
-        text = feminize(text)  # гарантируем женский род в финальном тексте
+        text = sanitize(feminize(text))  # женский род + без утёкших инструкций
         if not self.enable_humor:
             return text
         joke = maybe_joke(

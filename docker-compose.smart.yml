@@ -53,7 +53,7 @@ services:
       - -c
       - |
         until ollama list >/dev/null 2>&1; do echo "ждём ollama…"; sleep 2; done
-        MODEL="${OLLAMA_MODEL:-qwen2.5:1.5b}"
+        MODEL="${OLLAMA_MODEL:-qwen2.5:3b}"
         if ollama list 2>/dev/null | awk 'NR>1 {print $$1}' | grep -qx "$$MODEL"; then
           echo "Модель $$MODEL уже в кэше, пропускаем pull"
           exit 0
@@ -88,7 +88,7 @@ services:
     environment:
       DIKIDI_BASE_URL: "http://dikidi-sim:8089"
       OLLAMA_HOST: "http://ollama:11434"
-      OLLAMA_MODEL: "${OLLAMA_MODEL:-qwen2.5:1.5b}"
+      OLLAMA_MODEL: "${OLLAMA_MODEL:-qwen2.5:3b}"
       STT_MODEL: "${STT_MODEL:-small}"
       # ── Голос Оливии (Silero — живой женский) ──
       TTS_ENGINE: "${TTS_ENGINE:-silero}"

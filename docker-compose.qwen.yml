@@ -35,7 +35,7 @@ services:
     environment:
       TTS_ENGINE: "qwen"
       QWEN_CV_MODEL: "${QWEN_CV_MODEL:-Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice}"
-      QWEN_SPEAKER: "${QWEN_SPEAKER:-Vivian}"
+      QWEN_SPEAKER: "${QWEN_SPEAKER:-Serena}"
       QWEN_LANGUAGE: "${QWEN_LANGUAGE:-Russian}"
       QWEN_DEVICE: "${QWEN_DEVICE:-cuda:0}"
       QWEN_ATTN: "${QWEN_ATTN:-sdpa}"
