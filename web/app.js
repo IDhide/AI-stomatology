@@ -51,10 +51,13 @@
   }
 
   // ============================================================
-  //  Аудио-волна в круге
+  //  Аура: мягкие волны СНАРУЖИ круга (как на референсе)
   // ============================================================
   const wave = document.getElementById("wave");
   const wctx = wave.getContext("2d");
+  const aura = document.getElementById("aura");
+  const actx = aura.getContext("2d");
+  const avatarEl = document.getElementById("avatar");
 
   function sizeWave() {
     const dpr = window.devicePixelRatio || 1;
@@ -62,6 +65,65 @@
     wave.width = Math.max(2, r.width * dpr);
     wave.height = Math.max(2, r.height * dpr);
     wctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  }
+
+  function sizeAura() {
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    aura.width = window.innerWidth * dpr;
+    aura.height = window.innerHeight * dpr;
+    actx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  }
+
+  // Концентрические волны, расходящиеся ОТ КРАЯ шара наружу. Мягкие размытые
+  // полосы (как на фото-референсе). Ярче/быстрее, когда Оливия говорит.
+  function drawAura(t) {
+    const W = window.innerWidth, H = window.innerHeight;
+    actx.clearRect(0, 0, W, H);
+    if (state.mode === "idle") return;
+
+    const ar = avatarEl.getBoundingClientRect();
+    const cx = ar.left + ar.width / 2;
+    const cy = ar.top + ar.height / 2;
+    const orbR = ar.width / 2;
+    if (orbR < 4) return;
+
+    let energy, speed;
+    if (state.mode === "speaking") {
+      energy = 0.50 + state.ampSmooth * 0.7;
+      speed = 1.0 + state.ampSmooth * 0.6;
+    } else if (state.mode === "listening") {
+      energy = 0.32; speed = 0.60;
+    } else if (state.mode === "thinking") {
+      energy = 0.24; speed = 0.42;
+    } else {
+      energy = 0.30; speed = 0.50;            // greeting
+    }
+
+    const span = Math.min(W, H) * 0.46;       // насколько далеко уходят волны
+    const bandHalf = span * 0.28;             // ширина мягкой полосы
+    const RINGS = 5;
+    const cycle = 5200 / speed;
+
+    actx.save();
+    actx.globalCompositeOperation = "lighter";
+    for (let i = 0; i < RINGS; i++) {
+      const phase = ((t / cycle) + i / RINGS) % 1;
+      const rad = orbR + phase * span;        // от края шара — наружу
+      const fade = Math.sin(Math.PI * phase); // ярче в середине пути, гаснет к краю
+      const a = Math.min(0.5, fade * energy * 0.42);
+      if (a <= 0.01) continue;
+      const inner = Math.max(orbR * 0.7, rad - bandHalf);
+      const outer = rad + bandHalf;
+      const g = actx.createRadialGradient(cx, cy, inner, cx, cy, outer);
+      g.addColorStop(0, "rgba(150, 110, 255, 0)");
+      g.addColorStop(0.5, `rgba(172, 122, 255, ${a})`);
+      g.addColorStop(1, "rgba(150, 110, 255, 0)");
+      actx.fillStyle = g;
+      actx.beginPath();
+      actx.arc(cx, cy, outer, 0, Math.PI * 2);
+      actx.fill();
+    }
+    actx.restore();
   }
 
   // Мягкие концентрические волны, расходящиеся из центра (как у голосового
@@ -550,7 +612,7 @@
     }
 
     drawBg(t);
-    drawWave(t);
+    drawAura(t);
     requestAnimationFrame(loop);
   }
 
@@ -598,7 +660,7 @@
   }
 
   // ── init ────────────────────────────────────────────────
-  function resizeAll() { sizeBg(); sizeWave(); initJellies(); }
+  function resizeAll() { sizeBg(); sizeWave(); sizeAura(); initJellies(); }
   window.addEventListener("resize", resizeAll);
 
   // ручной триггер для отладки без сервера: клавиши 1..5
@@ -609,6 +671,7 @@
 
   sizeBg();
   sizeWave();
+  sizeAura();
   initJellies();
   setMode("idle");
   tryVideo();
