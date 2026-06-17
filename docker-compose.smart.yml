@@ -26,12 +26,25 @@ services:
       OLLAMA_KEEP_ALIVE: "30m"
       # одна параллельная сессия (киоск всё равно один) — больше памяти на контекст
       OLLAMA_NUM_PARALLEL: "1"
-      # ускорение на CPU
+      # ускорение (на GPU тоже даёт прирост)
       OLLAMA_FLASH_ATTENTION: "1"
+      # сколько слоёв модели грузить на GPU. 999 = вся модель целиком на видеокарте
+      # (qwen2.5:3b q4 ≈ 2.5 ГБ — спокойно помещается рядом с TTS на 3060 12 ГБ).
+      # Если GPU нет — Ollama сам откатится на CPU, ничего не сломается.
+      OLLAMA_NUM_GPU: "${OLLAMA_NUM_GPU:-999}"
     volumes:
       - ollama_data:/root/.ollama
     ports:
       - "11434:11434"
+    # GPU для Ollama (нужен nvidia-container-toolkit на хосте). Делит ту же
+    # видеокарту с TTS — на 3060 12 ГБ LLM 3b + Qwen3-TTS 1.7B помещаются вместе.
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
     healthcheck:
       test: ["CMD", "ollama", "list"]
       interval: 10s
