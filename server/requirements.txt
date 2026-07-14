@@ -1,0 +1,20 @@
+# ── Ядро backend (обязательно) ──────────────────────────────────────
+fastapi>=0.110
+uvicorn[standard]>=0.27
+httpx>=0.27
+pydantic>=2.6
+pydantic-settings>=2.2
+pyyaml>=6.0
+loguru>=0.7
+websockets>=12.0
+
+# ── Память (опционально: нужен Supabase) ────────────────────────────
+supabase>=2.4
+
+# ── Распознавание лиц (опционально, тяжёлое ~300 МБ) ────────────────
+# Ставить отдельно: pip install -r requirements-face.txt
+# insightface>=0.7
+# onnxruntime>=1.17
+# opencv-python-headless>=4.9
+# numpy>=1.26
+numpy>=1.26

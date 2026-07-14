@@ -1,0 +1,139 @@
+"""
+FastAPI backend: WebSocket-мост между киоском и стриминговым пайплайном.
+
+Протокол WS (одно соединение = один экран/киоск):
+
+  Клиент → сервер
+    JSON  {"type":"presence","present":true}   человек вошёл  → приветствие
+    JSON  {"type":"presence","present":false}  человек ушёл   → прощание
+    JSON  {"type":"utterance_start"}            начало реплики пациента
+    BIN   <pcm16 mono 16k>                      аудио-чанки реплики
+    JSON  {"type":"utterance_end"}              конец реплики → обработка
+
+  Сервер → клиент
+    JSON  {"type":"state","value":"idle|listening|thinking|speaking"}
+    JSON  {"type":"transcript","text":...}      что услышали от пациента
+    JSON  {"type":"reply","text":...}           текст фразы ассистента
+    BIN   <pcm16 mono 16k>                      аудио для проигрывания
+    JSON  {"type":"speak_end"}                  ассистент договорил
+"""
+from __future__ import annotations
+
+from pathlib import Path
+
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
+from loguru import logger
+
+from .config import get_settings
+from .orchestrator import Conversation
+from .persona import Persona
+from .providers import build_providers
+
+app = FastAPI(title="Dental AI — Server")
+
+KIOSK_DIR = Path(__file__).resolve().parents[2] / "kiosk"
+
+
+@app.get("/health")
+async def health():
+    cfg = get_settings()
+    return {
+        "status": "ok",
+        "llm": cfg.llm_provider if cfg.has_grok else "mock",
+        "stt": cfg.stt_provider if cfg.has_elevenlabs else "mock",
+        "tts": cfg.tts_provider if (cfg.has_elevenlabs and cfg.tts_voice_id) else "mock",
+    }
+
+
+@app.websocket("/ws")
+async def ws_endpoint(ws: WebSocket):
+    await ws.accept()
+    cfg = get_settings()
+    stt, llm, tts = build_providers(cfg)
+    persona = Persona(cfg.prompts_path)
+    conv = Conversation(stt, llm, tts, persona)
+
+    audio_buf = bytearray()
+    recording = False
+
+    async def send_state(value: str):
+        await ws.send_json({"type": "state", "value": value})
+
+    async def audio_sink(chunk: bytes):
+        await ws.send_bytes(chunk)
+
+    async def speak(coro_factory, state: str = "speaking"):
+        await send_state(state)
+        await coro_factory()
+        await ws.send_json({"type": "speak_end"})
+        await send_state("idle")
+
+    logger.info("Киоск подключён")
+    try:
+        await send_state("idle")
+        while True:
+            msg = await ws.receive()
+
+            if "bytes" in msg and msg["bytes"] is not None:
+                if recording:
+                    audio_buf.extend(msg["bytes"])
+                continue
+
+            if "text" not in msg or msg["text"] is None:
+                continue
+
+            import json
+
+            try:
+                data = json.loads(msg["text"])
+            except json.JSONDecodeError:
+                continue
+
+            mtype = data.get("type")
+
+            if mtype == "presence":
+                if data.get("present"):
+                    await speak(lambda: conv.greet(audio_sink))
+                else:
+                    await speak(lambda: conv.farewell(audio_sink))
+
+            elif mtype == "utterance_start":
+                audio_buf.clear()
+                recording = True
+                await send_state("listening")
+
+            elif mtype == "utterance_end":
+                recording = False
+                audio = bytes(audio_buf)
+                audio_buf.clear()
+                await send_state("thinking")
+
+                async def on_transcript(t: str):
+                    await ws.send_json({"type": "transcript", "text": t})
+
+                async def on_reply_text(t: str):
+                    await ws.send_json({"type": "reply", "text": t})
+
+                await send_state("speaking")
+                await conv.handle_utterance(
+                    audio,
+                    audio_sink,
+                    on_transcript=on_transcript,
+                    on_reply_text=on_reply_text,
+                )
+                await ws.send_json({"type": "speak_end"})
+                await send_state("idle")
+
+    except WebSocketDisconnect:
+        logger.info("Киоск отключён")
+
+
+# Раздаём статику киоска последней (чтобы /ws и /health имели приоритет)
+if KIOSK_DIR.exists():
+    @app.get("/")
+    async def index():
+        return FileResponse(KIOSK_DIR / "index.html")
+
+    app.mount("/", StaticFiles(directory=str(KIOSK_DIR)), name="kiosk")

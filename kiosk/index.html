@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+  <title>Оливия · Стоматология №1</title>
+  <link rel="stylesheet" href="/styles.css" />
+  <script type="importmap">
+    { "imports": { "three": "https://unpkg.com/three@0.160.0/build/three.module.js" } }
+  </script>
+</head>
+<body>
+  <!-- Фон ожидания: видео с медузами (положите kiosk/assets/jellyfish.mp4) -->
+  <video id="idle-video" class="layer" autoplay muted loop playsinline></video>
+  <!-- Запасной анимированный фон, если видео нет -->
+  <div id="idle-fallback" class="layer nebula"></div>
+
+  <!-- Активный режим: WebGL-шар -->
+  <canvas id="scene" class="layer hidden"></canvas>
+
+  <!-- Служебный оверлей (субтитры + статус) -->
+  <div id="overlay">
+    <div id="caption"></div>
+    <div id="status">режим ожидания</div>
+  </div>
+
+  <!-- Кнопка старта: нужна, чтобы браузер разрешил микрофон/звук -->
+  <button id="start-btn">Запустить киоск</button>
+
+  <!-- Панель отладки для теста на MacBook (скрыта в проде) -->
+  <div id="debug">
+    <button data-act="enter">👤 Вошёл</button>
+    <button data-act="leave">🚪 Ушёл</button>
+    <button data-act="talk">🎤 Говорить</button>
+  </div>
+
+  <script type="module" src="/app.js"></script>
+</body>
+</html>
