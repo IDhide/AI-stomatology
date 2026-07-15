@@ -47,6 +47,8 @@ class Settings(BaseSettings):
     dikidi_api_key: str = Field(default="", alias="DIKIDI_API_KEY")
     dikidi_company_id: str = Field(default="", alias="DIKIDI_COMPANY_ID")
     dikidi_base_url: str = Field(default="https://api.dikidi.net", alias="DIKIDI_BASE_URL")
+    # true — подмешивать демо-записи, когда DIKIDI не подключён (только для теста!)
+    dikidi_demo: bool = Field(default=False, alias="DIKIDI_DEMO")
 
     # ── Supabase (память + pgvector для лиц) ────────────────────────
     supabase_url: str = Field(default="", alias="SUPABASE_URL")

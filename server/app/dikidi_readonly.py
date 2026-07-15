@@ -16,7 +16,7 @@ from datetime import datetime
 import httpx
 from loguru import logger
 
-# Демо-записи на сегодня (когда нет ключей DIKIDI)
+# Демо-записи на сегодня (только при DIKIDI_DEMO=true — для теста сценария)
 _DEMO_BOOKINGS = [
     {"time": "15:00", "client": "Анна", "service": "консультация терапевта"},
     {"time": "16:30", "client": "Дмитрий", "service": "чистка зубов"},
@@ -26,18 +26,27 @@ _DEMO_BOOKINGS = [
 
 class DikidiReadOnly:
     def __init__(self, api_key: str = "", company_id: str = "",
-                 base_url: str = "https://api.dikidi.net"):
+                 base_url: str = "https://api.dikidi.net", demo: bool = False):
         self.api_key = api_key
         self.company_id = company_id
         self.base_url = base_url.rstrip("/")
         self.enabled = bool(api_key and company_id)
+        self.demo = demo and not self.enabled
         if not self.enabled:
-            logger.warning("DIKIDI: ключей нет — использую демо-записи")
+            if self.demo:
+                logger.warning("DIKIDI: ключей нет, DIKIDI_DEMO=true — демо-записи")
+            else:
+                logger.info("DIKIDI: не подключён — Оливия работает без расписания")
+
+    @property
+    def available(self) -> bool:
+        """Есть ли у Оливии хоть какие-то данные о записях."""
+        return self.enabled or self.demo
 
     async def today_bookings(self) -> list[dict]:
         """Записи на сегодня: [{time, client, service}, ...]."""
         if not self.enabled:
-            return list(_DEMO_BOOKINGS)
+            return list(_DEMO_BOOKINGS) if self.demo else []
         try:
             today = datetime.now().strftime("%Y-%m-%d")
             async with httpx.AsyncClient(timeout=10.0) as client:
@@ -62,8 +71,19 @@ class DikidiReadOnly:
             return []
 
     @staticmethod
-    def format_for_prompt(bookings: list[dict]) -> str:
+    def format_for_prompt(bookings: list[dict], available: bool = True) -> str:
         """Блок для system-промпта: расписание + жёсткие правила read-only."""
+        if not available:
+            # Расписания нет вообще — Оливия не должна ничего утверждать о записях
+            return (
+                "ДОСТУП К СИСТЕМЕ ЗАПИСИ: сейчас недоступен.\n"
+                "• НИКОГДА не называй время чьей-либо записи и не подтверждай, "
+                "что запись существует.\n"
+                "• Если пациент спрашивает про свою запись — вежливо попроси "
+                "подождать: администратор посмотрит запись и пригласит.\n"
+                "• Новые записи ты не создаёшь: собери имя и телефон, скажи, что "
+                "администратор перезвонит и согласует время."
+            )
         if bookings:
             lines = "\n".join(
                 f"  • {b['time']} — {b['client']}, {b['service']}" for b in bookings

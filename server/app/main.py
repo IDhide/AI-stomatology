@@ -48,6 +48,40 @@ async def health():
     }
 
 
+@app.get("/voices")
+async def voices():
+    """
+    Голоса, доступные ТВОЕМУ аккаунту ElevenLabs.
+    Открой http://localhost:8000/voices — категория premade работает на Free.
+    """
+    cfg = get_settings()
+    if not cfg.has_elevenlabs:
+        return {"error": "нет ELEVENLABS_API_KEY в server/.env"}
+    import httpx
+
+    async with httpx.AsyncClient(timeout=15.0) as client:
+        r = await client.get(
+            "https://api.elevenlabs.io/v1/voices",
+            headers={"xi-api-key": cfg.elevenlabs_api_key},
+        )
+        r.raise_for_status()
+        data = r.json().get("voices", [])
+    result = [
+        {
+            "voice_id": v.get("voice_id"),
+            "name": v.get("name"),
+            "category": v.get("category"),
+            "labels": v.get("labels", {}),
+            "works_on_free": v.get("category") in ("premade", "cloned", "generated"),
+        }
+        for v in data
+    ]
+    # premade сверху — их можно использовать на бесплатном тарифе
+    result.sort(key=lambda v: (not v["works_on_free"], v["name"] or ""))
+    return {"hint": "возьми voice_id с works_on_free=true → ELEVENLABS_VOICE_ID",
+            "voices": result}
+
+
 @app.websocket("/ws")
 async def ws_endpoint(ws: WebSocket):
     await ws.accept()
@@ -59,6 +93,7 @@ async def ws_endpoint(ws: WebSocket):
         api_key=cfg.dikidi_api_key,
         company_id=cfg.dikidi_company_id,
         base_url=cfg.dikidi_base_url,
+        demo=cfg.dikidi_demo,
     )
 
     audio_buf = bytearray()
@@ -104,7 +139,9 @@ async def ws_endpoint(ws: WebSocket):
                     if data.get("present"):
                         # свежие записи на сегодня → в контекст Оливии (read-only)
                         bookings = await dikidi.today_bookings()
-                        conv.set_context(DikidiReadOnly.format_for_prompt(bookings))
+                        conv.set_context(
+                            DikidiReadOnly.format_for_prompt(bookings, dikidi.available)
+                        )
                         await speak(lambda: conv.greet(audio_sink))
                     else:
                         await speak(lambda: conv.farewell(audio_sink))
