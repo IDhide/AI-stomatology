@@ -1,84 +1,87 @@
-// Фиолетовая сфера в стиле референса «OLIVIA AI»: гладкий шар с мягким
-// градиентом и большим ореолом-свечением. Реакция на голос — плавная
-// пульсация масштаба и яркости + едва заметная органическая рябь,
-// а не «шипы» из шума.
+// Визуализатор «плазменная туманность» — точно по референс-видео:
+// тёмное ядро, вокруг — мягкое светящееся сине-фиолетовое кольцо с розовыми
+// акцентами, всё диффузное, по полю расходятся тонкие концентрические волны.
+// Полноэкранный фрагментный шейдер; голос усиливает волны и яркость.
 import * as THREE from "three";
 
 const VERT = /* glsl */ `
-  uniform float uTime;
-  uniform float uAmp;      // 0..1 амплитуда голоса
-  uniform float uActivity; // базовое «дыхание» по состоянию
-  varying vec3 vNormal;
-  varying vec3 vView;
-
-  // компактный 3D-шум (достаточно для мягкой ряби)
-  float hash(vec3 p){ return fract(sin(dot(p, vec3(127.1,311.7,74.7)))*43758.5453); }
-  float noise(vec3 p){
-    vec3 i=floor(p), f=fract(p); f=f*f*(3.0-2.0*f);
-    return mix(mix(mix(hash(i),hash(i+vec3(1,0,0)),f.x),
-                   mix(hash(i+vec3(0,1,0)),hash(i+vec3(1,1,0)),f.x),f.y),
-               mix(mix(hash(i+vec3(0,0,1)),hash(i+vec3(1,0,1)),f.x),
-                   mix(hash(i+vec3(0,1,1)),hash(i+vec3(1,1,1)),f.x),f.y),f.z);
-  }
-
-  void main(){
-    vNormal = normalize(normalMatrix * normal);
-    // общий пульс: дыхание + голос
-    float scale = 1.0 + uActivity*0.02 + uAmp*0.06;
-    // мягкая органическая рябь, заметная только при речи
-    float ripple = (noise(normal*3.0 + uTime*0.6) - 0.5) * (0.006 + uAmp*0.05);
-    vec3 pos = position * scale + normal * ripple;
-    vec4 mv = modelViewMatrix * vec4(pos, 1.0);
-    vView = -mv.xyz;
-    gl_Position = projectionMatrix * mv;
-  }
+  void main() { gl_Position = vec4(position, 1.0); }
 `;
 
 const FRAG = /* glsl */ `
-  uniform float uAmp;
-  varying vec3 vNormal;
-  varying vec3 vView;
+  precision highp float;
+  uniform vec2  uRes;
+  uniform float uTime;
+  uniform float uAmp;      // 0..1 голос
+  uniform float uActivity; // «дыхание» состояния
+
+  // ── value noise + fbm ──────────────────────────────────────────
+  float hash(vec2 p){ return fract(sin(dot(p, vec2(127.1,311.7)))*43758.5453123); }
+  float noise(vec2 p){
+    vec2 i=floor(p), f=fract(p); f=f*f*(3.0-2.0*f);
+    return mix(mix(hash(i),hash(i+vec2(1,0)),f.x),
+               mix(hash(i+vec2(0,1)),hash(i+vec2(1,1)),f.x),f.y);
+  }
+  float fbm(vec2 p){
+    float v=0.0, a=0.5;
+    for(int i=0;i<4;i++){ v+=a*noise(p); p*=2.03; a*=0.5; }
+    return v;
+  }
 
   void main(){
-    vec3 N = normalize(vNormal);
-    vec3 V = normalize(vView);
+    vec2 uv = (gl_FragCoord.xy - 0.5*uRes) / min(uRes.x, uRes.y);
+    float r = length(uv);
+    // направление вместо угла — нет шва на границе atan
+    vec2 dir = uv / max(r, 1e-4);
+    float t = uTime;
 
-    // палитра как на референсе: глубокий фиолет → светлая сердцевина
-    vec3 deep  = vec3(0.26, 0.10, 0.62);
-    vec3 mid   = vec3(0.48, 0.24, 0.96);
-    vec3 light = vec3(0.76, 0.58, 1.00);
+    // ── органическая (не круглая) форма кольца ────────────────────
+    float wob = (fbm(dir*1.4 + vec2(7.0, t*0.10)) - 0.5) * 0.14
+              + (fbm(dir*2.9 + vec2(-3.0, t*0.06)) - 0.5) * 0.07;
+    float r0 = 0.31 + wob + uAmp*0.02;    // радиус светящегося кольца
 
-    // свет сверху-спереди — даёт мягкий объём, как у матового шара
-    vec3 L = normalize(vec3(0.25, 0.55, 1.0));
-    float lambert = clamp(dot(N, L), 0.0, 1.0);
+    float d = r - r0;
 
-    vec3 col = mix(deep, mid, smoothstep(0.0, 0.75, lambert));
-    col = mix(col, light, pow(lambert, 3.0) * 0.85);
+    // ── профиль света: тёмное ядро, мягкое кольцо, широкий ореол ──
+    float ring  = exp(-d*d / 0.010);
+    float halo  = exp(-max(d, 0.0) * 3.2) * 0.55;
+    float core  = smoothstep(0.0, r0*0.95, r);          // затемнение ядра
+    float inner = exp(-max(-d, 0.0) * 6.0) * 0.45;      // свет у кромки ядра
 
-    // мягкий светящийся край (subsurface-эффект)
-    float rim = pow(1.0 - clamp(dot(N, V), 0.0, 1.0), 2.2);
-    col += vec3(0.45, 0.28, 0.95) * rim * 0.55;
+    // ── тонкие концентрические волны (главная фишка референса) ───
+    float wPhase = r*120.0 - t*2.2 + fbm(dir*2.2 + vec2(0.0, t*0.15))*6.0;
+    float waves  = 0.5 + 0.5*sin(wPhase);
+    waves = pow(waves, 2.0);                            // тонкие гребни
+    float wAmp = 0.10 + uActivity*0.06 + uAmp*0.38;     // голос раскачивает волны
+    float lit = (ring*0.85 + halo + inner) * mix(1.0 - wAmp, 1.0, waves);
+    lit *= mix(0.10, 1.0, core);                        // ядро остаётся тёмным
 
-    // голос делает шар ярче
-    col *= 1.0 + uAmp * 0.55;
+    // ── цвет: глубокая синева, фиолет и розовые акценты ───────────
+    float hueA = fbm(dir*1.1 + vec2(21.0, t*0.08));
+    float hueB = fbm(dir*0.8 + vec2(-11.0, t*0.05));
+    vec3 deepBlue = vec3(0.06, 0.10, 0.65);
+    vec3 blue     = vec3(0.12, 0.25, 0.95);
+    vec3 violet   = vec3(0.38, 0.18, 0.95);
+    vec3 pink     = vec3(0.85, 0.38, 0.90);
+    vec3 cyan     = vec3(0.25, 0.55, 1.00);
 
-    gl_FragColor = vec4(col, 1.0);
+    vec3 col = mix(deepBlue, blue, smoothstep(0.2, 0.65, hueA));
+    col = mix(col, violet, smoothstep(0.5, 0.85, hueB));
+    col = mix(col, pink,   smoothstep(0.78, 0.97, hueA) * 0.7);
+    col = mix(col, cyan,   smoothstep(0.25, 0.0, hueB) * 0.3);
+
+    // ── фон: глубокая тёмная синева, как на видео ─────────────────
+    vec3 bg = mix(vec3(0.025, 0.03, 0.14), vec3(0.008, 0.010, 0.05),
+                  smoothstep(0.0, 1.2, r));
+
+    vec3 final = bg + col * lit * (0.50 + uAmp*0.45);
+
+    // виньетирование
+    final *= 1.0 - 0.35*smoothstep(0.6, 1.35, r);
+
+    gl_FragColor = vec4(final, 1.0);
   }
 `;
-
-// Текстура ореола: мягкий радиальный градиент
-function makeHaloTexture() {
-  const c = document.createElement("canvas");
-  c.width = c.height = 512;
-  const ctx = c.getContext("2d");
-  const g = ctx.createRadialGradient(256, 256, 60, 256, 256, 256);
-  g.addColorStop(0, "rgba(123,63,242,0.55)");
-  g.addColorStop(0.4, "rgba(110,50,230,0.22)");
-  g.addColorStop(1, "rgba(90,40,200,0)");
-  ctx.fillStyle = g;
-  ctx.fillRect(0, 0, 512, 512);
-  return new THREE.CanvasTexture(c);
-}
 
 export class Visualizer {
   constructor(canvas) {
@@ -87,37 +90,28 @@ export class Visualizer {
     this.ampTarget = 0;
     this.activity = 0.15;
 
-    this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true });
+    this.renderer = new THREE.WebGLRenderer({ canvas, antialias: false });
     this.renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
 
     this.scene = new THREE.Scene();
-    this.camera = new THREE.PerspectiveCamera(45, 1, 0.1, 100);
-    this.camera.position.z = 4.2;
+    this.camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
 
     this.uniforms = {
+      uRes: { value: new THREE.Vector2(1, 1) },
       uTime: { value: 0 },
       uAmp: { value: 0 },
       uActivity: { value: 0.15 },
     };
 
-    // ореол позади шара
-    this.halo = new THREE.Sprite(
-      new THREE.SpriteMaterial({
-        map: makeHaloTexture(),
-        transparent: true,
-        depthWrite: false,
-        blending: THREE.AdditiveBlending,
+    const quad = new THREE.Mesh(
+      new THREE.PlaneGeometry(2, 2),
+      new THREE.ShaderMaterial({
+        uniforms: this.uniforms,
+        vertexShader: VERT,
+        fragmentShader: FRAG,
       }),
     );
-    this.halo.scale.set(5.2, 5.2, 1);
-    this.scene.add(this.halo);
-
-    const geo = new THREE.SphereGeometry(1.15, 128, 128);
-    const mat = new THREE.ShaderMaterial({
-      uniforms: this.uniforms, vertexShader: VERT, fragmentShader: FRAG,
-    });
-    this.mesh = new THREE.Mesh(geo, mat);
-    this.scene.add(this.mesh);
+    this.scene.add(quad);
 
     this.resize();
     addEventListener("resize", () => this.resize());
@@ -128,38 +122,30 @@ export class Visualizer {
   resize() {
     const w = innerWidth, h = innerHeight;
     this.renderer.setSize(w, h, false);
-    this.camera.aspect = w / h;
-    this.camera.updateProjectionMatrix();
+    const pr = this.renderer.getPixelRatio();
+    this.uniforms.uRes.value.set(w * pr, h * pr);
   }
 
   // 0..1 — амплитуда текущего аудио-чанка TTS
-  setAmplitude(a) { this.ampTarget = Math.min(1, a); }
+  setAmplitude(a) { this.ampTarget = Math.min(1, a * 1.4); }
 
   setState(state) {
-    this.activity = { idle: 0.05, listening: 0.3, thinking: 0.6, speaking: 0.4 }[state] ?? 0.15;
+    this.activity = { idle: 0.1, listening: 0.35, thinking: 0.7, speaking: 0.5 }[state] ?? 0.15;
   }
 
   _loop() {
     requestAnimationFrame(() => this._loop());
     const dt = this.clock.getDelta();
-    const t = this.uniforms.uTime.value += dt;
 
-    // сглаживание: быстрая атака, плавный спад
-    const k = this.ampTarget > this.amp ? 0.45 : 0.06;
+    // быстрая атака, плавный спад — волны «дышат» вместе с речью
+    const k = this.ampTarget > this.amp ? 0.5 : 0.05;
     this.amp += (this.ampTarget - this.amp) * k;
-    this.ampTarget *= 0.9;
+    this.ampTarget *= 0.92;
 
+    this.uniforms.uTime.value += dt * (0.8 + this.activity * 0.6 + this.amp * 0.8);
     this.uniforms.uAmp.value = this.amp;
     this.uniforms.uActivity.value += (this.activity - this.uniforms.uActivity.value) * 0.04;
 
-    // лёгкое «дыхание» в покое + отклик ореола на голос
-    const breathe = 1 + Math.sin(t * 1.4) * 0.012 * (1 + this.activity);
-    this.mesh.scale.setScalar(breathe);
-    const haloScale = 5.2 * (1 + this.amp * 0.25 + Math.sin(t * 1.4) * 0.02);
-    this.halo.scale.set(haloScale, haloScale, 1);
-    this.halo.material.opacity = 0.75 + this.amp * 0.25;
-
-    this.mesh.rotation.y += dt * 0.05;
     this.renderer.render(this.scene, this.camera);
   }
 }

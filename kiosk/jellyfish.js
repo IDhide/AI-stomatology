@@ -1,14 +1,7 @@
-// Процедурная сцена «медузы» для режима ожидания — чистый JavaScript/canvas,
-// видеофайл не нужен. Тёмный звёздный фон, полупрозрачные светящиеся медузы
-// с пульсирующим куполом и волнистыми щупальцами, медленно плывут вверх.
-
-const PALETTES = [
-  { bell: [140, 190, 255], glow: [90, 150, 255] },   // голубая
-  { bell: [120, 235, 255], glow: [60, 190, 230] },   // бирюзовая
-  { bell: [255, 170, 120], glow: [255, 120, 70] },   // янтарная
-  { bell: [200, 140, 255], glow: [150, 80, 255] },   // фиолетовая
-  { bell: [255, 150, 200], glow: [255, 90, 160] },   // розовая
-];
+// Процедурная сцена «медузы» для режима ожидания — реалистичный стиль.
+// Полупрозрачные лунные медузы: светящийся край купола, четыре гонады
+// внутри (как у настоящей Aurelia aurita), десятки тонких щупалец и
+// волнистые ротовые лопасти. Глубина: дальние — мельче, тусклее, размытее.
 
 function rnd(a, b) { return a + Math.random() * (b - a); }
 
@@ -16,92 +9,143 @@ class Jelly {
   constructor(w, h, fromBottom = false) { this.reset(w, h, fromBottom); }
 
   reset(w, h, fromBottom) {
+    this.depth = Math.random();                    // 0 — близко, 1 — далеко
+    const near = 1 - this.depth;
     this.x = rnd(0.05, 0.95) * w;
-    this.y = fromBottom ? h + rnd(60, 300) : rnd(0, h);
-    this.size = rnd(28, 86);                    // радиус купола
-    this.speed = rnd(8, 22) / this.size * 14;   // маленькие — шустрее
+    this.y = fromBottom ? h + rnd(100, 500) : rnd(0, h);
+    this.size = rnd(60, 110) * (0.35 + near * 0.65);
+    this.speed = rnd(5, 9) * (0.5 + near * 0.5);
     this.phase = rnd(0, Math.PI * 2);
-    this.pulseFreq = rnd(0.6, 1.1);
-    this.swayAmp = rnd(10, 34);
-    this.swayFreq = rnd(0.08, 0.2);
-    this.palette = PALETTES[(Math.random() * PALETTES.length) | 0];
-    this.tentacles = 5 + ((Math.random() * 3) | 0);
-    this.alpha = rnd(0.55, 0.9);
+    this.pulseFreq = rnd(0.35, 0.6);               // медленное «дыхание»
+    this.swayAmp = rnd(6, 18);
+    this.tilt = rnd(-0.25, 0.25);
+    this.tiltFreq = rnd(0.05, 0.12);
+    // приглушённые природные тона: бледно-голубой, реже — розоватый
+    this.hue = Math.random() < 0.75 ? rnd(190, 215) : rnd(300, 330);
+    this.alpha = (0.55 + near * 0.50);
+    this.tentacles = 24;
+    this.blur = this.depth * 3.5;                  // дальние — мягче
   }
 
   update(dt, w, h) {
-    this.phase += dt * this.pulseFreq;
-    this.y -= this.speed * dt * 10 * (1 + 0.5 * Math.max(0, Math.sin(this.phase)));
-    this.x += Math.sin(this.phase * this.swayFreq * 8) * this.swayAmp * dt;
-    if (this.y < -this.size * 4) this.reset(w, h, true);
+    this.phase += dt * this.pulseFreq * Math.PI * 2;
+    const thrust = Math.max(0, Math.sin(this.phase)) ** 2;
+    this.y -= this.speed * dt * (6 + thrust * 22);
+    this.x += Math.sin(this.phase * 0.23) * this.swayAmp * dt;
+    if (this.y < -this.size * 5) this.reset(w, h, true);
   }
 
   draw(ctx) {
-    const { x, y, size } = this;
-    const pulse = 1 + 0.09 * Math.sin(this.phase);        // купол «дышит»
-    const squash = 1 - 0.12 * Math.sin(this.phase);
-    const [br, bg, bb] = this.palette.bell;
-    const [gr, gg, gb] = this.palette.glow;
+    const { size, hue, alpha } = this;
+    const pulse = Math.sin(this.phase);
+    const bellW = 1 + 0.06 * pulse;                // купол чуть расширяется…
+    const bellH = 1 - 0.10 * pulse;                // …и сплющивается
+    const tiltNow = this.tilt * Math.sin(this.phase * this.tiltFreq * 8);
 
     ctx.save();
-    ctx.translate(x, y);
+    ctx.translate(this.x, this.y);
+    ctx.rotate(tiltNow);
+    if (this.blur > 0.5) ctx.filter = `blur(${this.blur.toFixed(1)}px)`;
     ctx.globalCompositeOperation = "lighter";
 
-    // ── щупальца ────────────────────────────────────────────────
-    ctx.lineWidth = Math.max(1, size * 0.035);
-    for (let i = 0; i < this.tentacles; i++) {
-      const t = (i / (this.tentacles - 1) - 0.5) * 2;      // -1..1
-      const baseX = t * size * 0.7;
-      const len = size * rnd(2.2, 2.4) * (1 - Math.abs(t) * 0.25);
-      const sway = Math.sin(this.phase * 1.4 + i) * size * 0.35;
+    // ── ротовые лопасти (4 волнистые полупрозрачные ленты) ────────
+    for (let i = 0; i < 4; i++) {
+      const bx = (i / 3 - 0.5) * size * 0.5;
+      const len = size * 1.7;
+      const sw = Math.sin(this.phase * 0.9 + i * 1.7) * size * 0.28;
       const grad = ctx.createLinearGradient(0, 0, 0, len);
-      grad.addColorStop(0, `rgba(${br},${bg},${bb},${0.5 * this.alpha})`);
-      grad.addColorStop(1, `rgba(${gr},${gg},${gb},0)`);
+      grad.addColorStop(0, `hsla(${hue}, 60%, 80%, ${0.20 * alpha})`);
+      grad.addColorStop(1, `hsla(${hue}, 70%, 65%, 0)`);
       ctx.strokeStyle = grad;
+      ctx.lineWidth = size * 0.10;
       ctx.beginPath();
-      ctx.moveTo(baseX, size * 0.25);
-      ctx.bezierCurveTo(
-        baseX + sway * 0.4, len * 0.4,
-        baseX - sway, len * 0.75,
-        baseX + sway * 0.6, len,
-      );
+      ctx.moveTo(bx * 0.5, size * 0.30);
+      ctx.bezierCurveTo(bx + sw * 0.5, len * 0.35, bx - sw, len * 0.7, bx + sw, len);
+      ctx.stroke();
+      // светлый гребень ленты
+      ctx.lineWidth = size * 0.03;
+      ctx.strokeStyle = `hsla(${hue}, 40%, 92%, ${0.18 * alpha})`;
       ctx.stroke();
     }
 
-    // ── свечение вокруг купола ──────────────────────────────────
-    const halo = ctx.createRadialGradient(0, 0, size * 0.2, 0, 0, size * 2.4);
-    halo.addColorStop(0, `rgba(${gr},${gg},${gb},${0.28 * this.alpha})`);
-    halo.addColorStop(1, `rgba(${gr},${gg},${gb},0)`);
-    ctx.fillStyle = halo;
-    ctx.beginPath();
-    ctx.arc(0, 0, size * 2.4, 0, Math.PI * 2);
-    ctx.fill();
+    // ── тонкие краевые щупальца ───────────────────────────────────
+    ctx.lineWidth = Math.max(0.5, size * 0.012);
+    for (let i = 0; i < this.tentacles; i++) {
+      const t = (i / (this.tentacles - 1) - 0.5) * 2;
+      const baseX = t * size * 0.92 * bellW;
+      const len = size * rnd(1.6, 2.1) * (1 - t * t * 0.3);
+      const sw = Math.sin(this.phase * 1.1 + i * 0.9) * size * 0.16 * (1 - Math.abs(t) * 0.4);
+      const grad = ctx.createLinearGradient(0, 0, 0, len);
+      grad.addColorStop(0, `hsla(${hue}, 45%, 85%, ${0.30 * alpha})`);
+      grad.addColorStop(1, `hsla(${hue}, 60%, 70%, 0)`);
+      ctx.strokeStyle = grad;
+      ctx.beginPath();
+      ctx.moveTo(baseX, size * 0.18);
+      ctx.quadraticCurveTo(baseX + sw, len * 0.55, baseX + sw * 1.6, len);
+      ctx.stroke();
+    }
 
-    // ── купол ───────────────────────────────────────────────────
-    ctx.scale(pulse, squash);
-    const bell = ctx.createRadialGradient(0, -size * 0.35, size * 0.1, 0, 0, size);
-    bell.addColorStop(0, `rgba(255,255,255,${0.85 * this.alpha})`);
-    bell.addColorStop(0.35, `rgba(${br},${bg},${bb},${0.55 * this.alpha})`);
-    bell.addColorStop(1, `rgba(${gr},${gg},${gb},0.05)`);
+    // ── купол ─────────────────────────────────────────────────────
+    ctx.save();
+    ctx.scale(bellW, bellH);
+
+    // тело купола: почти прозрачное, светлеет к макушке
+    const bell = ctx.createRadialGradient(0, -size * 0.25, size * 0.05, 0, 0, size);
+    bell.addColorStop(0.0, `hsla(${hue}, 35%, 96%, ${0.42 * alpha})`);
+    bell.addColorStop(0.5, `hsla(${hue}, 60%, 82%, ${0.20 * alpha})`);
+    bell.addColorStop(0.92, `hsla(${hue}, 70%, 72%, ${0.08 * alpha})`);
+    bell.addColorStop(1.0, `hsla(${hue}, 70%, 70%, 0)`);
     ctx.fillStyle = bell;
     ctx.beginPath();
-    ctx.arc(0, 0, size, Math.PI, 0);                       // верхняя половина
-    ctx.bezierCurveTo(size * 0.9, size * 0.45, size * 0.4, size * 0.55, 0, size * 0.5);
-    ctx.bezierCurveTo(-size * 0.4, size * 0.55, -size * 0.9, size * 0.45, -size, 0);
+    ctx.arc(0, 0, size, Math.PI, 0);
+    ctx.bezierCurveTo(size * 0.95, size * 0.28, size * 0.45, size * 0.4, 0, size * 0.36);
+    ctx.bezierCurveTo(-size * 0.45, size * 0.4, -size * 0.95, size * 0.28, -size, 0);
     ctx.fill();
+
+    // мягкое свечение края купола: короткие дуги с круглыми концами,
+    // ярче у макушки, растворяются к краям — без «шлема»
+    ctx.lineCap = "round";
+    const rimSegs = [
+      { from: Math.PI * 1.15, to: Math.PI * 1.85, w: 0.030, a: 0.28 },
+      { from: Math.PI * 1.30, to: Math.PI * 1.60, w: 0.014, a: 0.50 },
+    ];
+    for (const s of rimSegs) {
+      ctx.lineWidth = size * s.w;
+      ctx.strokeStyle = `hsla(${hue}, 40%, 94%, ${s.a * alpha})`;
+      ctx.beginPath();
+      ctx.arc(0, 0, size * 0.97, s.from, s.to);
+      ctx.stroke();
+    }
+
+    // четыре гонады-кольца ромбом вокруг центра (как у лунной медузы)
+    const gonadPos = [
+      [0, -size * 0.34], [size * 0.20, -size * 0.16],
+      [0, -size * 0.02], [-size * 0.20, -size * 0.16],
+    ];
+    for (const [gx, gy] of gonadPos) {
+      const g = ctx.createRadialGradient(gx, gy, size * 0.02, gx, gy, size * 0.13);
+      g.addColorStop(0, `hsla(${hue}, 35%, 95%, ${0.10 * alpha})`);
+      g.addColorStop(0.65, `hsla(${hue}, 45%, 88%, ${0.30 * alpha})`);
+      g.addColorStop(1, `hsla(${hue}, 60%, 75%, 0)`);
+      ctx.fillStyle = g;
+      ctx.beginPath();
+      ctx.ellipse(gx, gy, size * 0.13, size * 0.10, 0, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.restore();
 
     ctx.restore();
   }
 }
 
 export class JellyfishScene {
-  constructor(canvas, count = 8) {
+  constructor(canvas, count = 7) {
     this.canvas = canvas;
     this.ctx = canvas.getContext("2d");
     this.count = count;
     this.running = false;
     this.jellies = [];
-    this.stars = [];
+    this.motes = [];
     this._last = 0;
     this._resize();
     addEventListener("resize", () => this._resize());
@@ -110,12 +154,13 @@ export class JellyfishScene {
   _resize() {
     this.canvas.width = innerWidth;
     this.canvas.height = innerHeight;
-    this.stars = Array.from({ length: 140 }, () => ({
+    // «морской снег» — взвесь, а не звёзды
+    this.motes = Array.from({ length: 110 }, () => ({
       x: Math.random() * this.canvas.width,
       y: Math.random() * this.canvas.height,
-      r: rnd(0.4, 1.6),
-      tw: rnd(0.5, 2.5),
-      ph: rnd(0, Math.PI * 2),
+      r: rnd(0.3, 1.3),
+      vy: rnd(2, 7),
+      a: rnd(0.05, 0.30),
     }));
   }
 
@@ -123,8 +168,10 @@ export class JellyfishScene {
     if (this.running) return;
     this.running = true;
     const { width: w, height: h } = this.canvas;
-    if (!this.jellies.length)
+    if (!this.jellies.length) {
       this.jellies = Array.from({ length: this.count }, () => new Jelly(w, h));
+      this.jellies.sort((a, b) => b.depth - a.depth); // дальние рисуем первыми
+    }
     this._last = performance.now();
     requestAnimationFrame((t) => this._loop(t));
   }
@@ -138,26 +185,45 @@ export class JellyfishScene {
     const { ctx, canvas } = this;
     const { width: w, height: h } = canvas;
 
-    // фон: глубина океана/космоса
+    // глубина океана: сверху чуть светлее, книзу — чернильная
     const bg = ctx.createLinearGradient(0, 0, 0, h);
-    bg.addColorStop(0, "#050312");
-    bg.addColorStop(1, "#0a0620");
+    bg.addColorStop(0, "#0a1030");
+    bg.addColorStop(0.5, "#060a20");
+    bg.addColorStop(1, "#030512");
     ctx.globalCompositeOperation = "source-over";
+    ctx.filter = "none";
     ctx.fillStyle = bg;
     ctx.fillRect(0, 0, w, h);
 
-    // звёзды/планктон с мерцанием
+    // лучи света сверху
     ctx.globalCompositeOperation = "lighter";
     const t = now / 1000;
-    for (const s of this.stars) {
-      const a = 0.25 + 0.55 * (0.5 + 0.5 * Math.sin(t * s.tw + s.ph));
-      ctx.fillStyle = `rgba(190,200,255,${a})`;
+    for (let i = 0; i < 3; i++) {
+      const lx = w * (0.2 + i * 0.3) + Math.sin(t * 0.05 + i * 2) * w * 0.06;
+      const lg = ctx.createLinearGradient(lx, 0, lx + w * 0.06, h * 0.8);
+      lg.addColorStop(0, "rgba(90,130,220,0.05)");
+      lg.addColorStop(1, "rgba(90,130,220,0)");
+      ctx.fillStyle = lg;
       ctx.beginPath();
-      ctx.arc(s.x, s.y, s.r, 0, Math.PI * 2);
+      ctx.moveTo(lx - w * 0.02, 0);
+      ctx.lineTo(lx + w * 0.05, 0);
+      ctx.lineTo(lx + w * 0.16, h * 0.85);
+      ctx.lineTo(lx - w * 0.10, h * 0.85);
+      ctx.fill();
+    }
+
+    // морской снег медленно опускается
+    for (const m of this.motes) {
+      m.y += m.vy * dt * 3;
+      if (m.y > h) { m.y = -4; m.x = Math.random() * w; }
+      ctx.fillStyle = `rgba(170,195,235,${m.a})`;
+      ctx.beginPath();
+      ctx.arc(m.x, m.y, m.r, 0, Math.PI * 2);
       ctx.fill();
     }
 
     for (const j of this.jellies) { j.update(dt, w, h); j.draw(ctx); }
+    ctx.filter = "none";
 
     requestAnimationFrame((tt) => this._loop(tt));
   }
