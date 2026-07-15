@@ -87,6 +87,39 @@ const FRAG = /* glsl */ `
     // виньетирование — компактная «сфера света» в тёмном поле
     final *= 1.0 - 0.42*smoothstep(0.55, 1.25, r);
 
+    // ── объёмный 3D-шар в центре (как на референсе) ───────────────
+    float sr = 0.185 + uAmp*0.012 + uActivity*0.004;    // дышит с голосом
+    float sd = r - sr;
+    float sphereMask = smoothstep(0.008, -0.008, sd);
+
+    if (sphereMask > 0.0) {
+      // нормаль точки сферы — честное 3D
+      float nz = sqrt(max(1.0 - (r*r)/(sr*sr), 0.0));
+      vec3 N = vec3(uv/sr, nz);
+      // лёгкая органическая рябь поверхности при речи
+      float bump = (fbm(uv*7.0 + vec2(t*0.25, -t*0.18)) - 0.5) * (0.15 + uAmp*0.6);
+      N = normalize(N + vec3(bump*0.25));
+
+      vec3 L = normalize(vec3(-0.38, 0.70, 0.55));      // свет сверху-слева
+      float lam = clamp(dot(N, L), 0.0, 1.0);
+
+      vec3 sBase = vec3(0.16, 0.06, 0.42);              // тень
+      vec3 sMid  = vec3(0.44, 0.20, 0.94);              // бренд-фиолет
+      vec3 sHi   = vec3(0.80, 0.64, 1.00);              // блик-лаванда
+
+      vec3 sc = mix(sBase, sMid, smoothstep(0.0, 0.85, lam));
+      sc = mix(sc, sHi, pow(lam, 4.0) * 0.85);          // мягкий верхний блик
+      float rimS = pow(1.0 - nz, 2.6);                  // светящаяся кромка
+      sc += vec3(0.52, 0.32, 1.00) * rimS * 0.55;
+      sc *= 1.0 + uAmp*0.45;                            // голос подсвечивает
+      sc *= 0.97 + 0.06*fbm(uv*5.0 + t*0.1);            // живая поверхность
+
+      final = mix(final, sc, sphereMask);
+    }
+    // свечение сразу за кромкой шара — связывает его с туманностью
+    final += violet * exp(-max(sd, 0.0) * 26.0) * (0.20 + uAmp*0.25)
+           * (1.0 - sphereMask);
+
     gl_FragColor = vec4(final, 1.0);
   }
 `;
