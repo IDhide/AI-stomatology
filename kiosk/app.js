@@ -143,6 +143,7 @@ async function boot() {
     onUtteranceStart: () => { clearSilenceTimer(); send({ type: "utterance_start" }); },
     onChunk: (pcm) => { if (ws?.readyState === WebSocket.OPEN) ws.send(pcm.buffer); },
     onUtteranceEnd: () => send({ type: "utterance_end" }),
+    onUtteranceCancel: () => send({ type: "utterance_cancel" }),
   });
   await mic.init();
 

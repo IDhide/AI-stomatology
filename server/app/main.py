@@ -100,18 +100,29 @@ async def ws_endpoint(ws: WebSocket):
             mtype = data.get("type")
 
             if mtype == "presence":
-                if data.get("present"):
-                    # свежие записи на сегодня → в контекст Оливии (read-only)
-                    bookings = await dikidi.today_bookings()
-                    conv.set_context(DikidiReadOnly.format_for_prompt(bookings))
-                    await speak(lambda: conv.greet(audio_sink))
-                else:
-                    await speak(lambda: conv.farewell(audio_sink))
+                try:
+                    if data.get("present"):
+                        # свежие записи на сегодня → в контекст Оливии (read-only)
+                        bookings = await dikidi.today_bookings()
+                        conv.set_context(DikidiReadOnly.format_for_prompt(bookings))
+                        await speak(lambda: conv.greet(audio_sink))
+                    else:
+                        await speak(lambda: conv.farewell(audio_sink))
+                except Exception:
+                    logger.exception("Ошибка при приветствии/прощании")
+                    await ws.send_json({"type": "speak_end"})
+                    await send_state("idle")
 
             elif mtype == "utterance_start":
                 audio_buf.clear()
                 recording = True
                 await send_state("listening")
+
+            elif mtype == "utterance_cancel":
+                # клиент решил, что это был шорох, а не речь
+                recording = False
+                audio_buf.clear()
+                await send_state("idle")
 
             elif mtype == "utterance_end":
                 recording = False
@@ -126,12 +137,16 @@ async def ws_endpoint(ws: WebSocket):
                     await ws.send_json({"type": "reply", "text": t})
 
                 await send_state("speaking")
-                await conv.handle_utterance(
-                    audio,
-                    audio_sink,
-                    on_transcript=on_transcript,
-                    on_reply_text=on_reply_text,
-                )
+                try:
+                    await conv.handle_utterance(
+                        audio,
+                        audio_sink,
+                        on_transcript=on_transcript,
+                        on_reply_text=on_reply_text,
+                    )
+                except Exception:
+                    # ни одна ошибка STT/LLM/TTS не должна ронять соединение
+                    logger.exception("Ошибка обработки реплики")
                 await ws.send_json({"type": "speak_end"})
                 await send_state("idle")
 

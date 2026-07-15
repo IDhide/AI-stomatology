@@ -45,6 +45,7 @@ class ElevenLabsTTS(TTSProvider):
         payload = {
             "text": text,
             "model_id": self.model,
+            "language_code": "ru",
             "voice_settings": {
                 "stability": 0.4,
                 "similarity_boost": 0.75,
@@ -56,6 +57,12 @@ class ElevenLabsTTS(TTSProvider):
             if resp.status_code != 200:
                 body = await resp.aread()
                 logger.error(f"ElevenLabs TTS {resp.status_code}: {body[:300]!r}")
+                if resp.status_code == 402:
+                    logger.error(
+                        "402 = тариф Free не позволяет использовать голоса из Voice "
+                        "Library через API. Решение: возьмите premade-голос (вкладка "
+                        "Voices → Default в ElevenLabs) ИЛИ перейдите на план Starter."
+                    )
                 resp.raise_for_status()
             async for chunk in resp.aiter_bytes(chunk_size=4096):
                 if chunk:

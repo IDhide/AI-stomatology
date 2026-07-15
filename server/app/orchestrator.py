@@ -129,8 +129,13 @@ class Conversation:
             yield tail
 
     async def _speak(self, text: str, sink: AudioSink) -> None:
-        async for chunk in self.tts.stream(text):
-            await sink(chunk)
+        # Ошибка синтеза не должна убивать разговор: текст уже ушёл на экран
+        # субтитрами, история сохранится — просто без звука этой фразы.
+        try:
+            async for chunk in self.tts.stream(text):
+                await sink(chunk)
+        except Exception as e:
+            logger.error(f"TTS не смог озвучить фразу: {e}")
 
     def _trim(self) -> None:
         # оставляем system за скобками (он не в history); режем историю

@@ -23,14 +23,17 @@ function floatToPcm16(f32) {
 
 // ── Захват микрофона с автоматической детекцией реплики (VAD) ────────
 export class MicCapture {
-  constructor({ onUtteranceStart, onChunk, onUtteranceEnd }) {
+  constructor({ onUtteranceStart, onChunk, onUtteranceEnd, onUtteranceCancel }) {
     this.onUtteranceStart = onUtteranceStart;
     this.onChunk = onChunk;          // (Int16Array) во время речи
     this.onUtteranceEnd = onUtteranceEnd;
+    this.onUtteranceCancel = onUtteranceCancel; // фраза слишком короткая
     this.speaking = false;
     this.silenceMs = 0;
+    this.speechMs = 0;               // сколько реальной речи накопилось
     this.enabled = false;            // «слушаем ли сейчас пациента»
     this.SILENCE_LIMIT = 800;        // мс тишины = конец фразы
+    this.MIN_SPEECH_MS = 400;        // короче — шорох, не отправляем в STT
     this.THRESH = 0.012;             // порог энергии (RMS)
   }
 
@@ -64,8 +67,9 @@ export class MicCapture {
     const frameMs = (frame.length / this.sr) * 1000;
 
     if (rms > this.THRESH) {
-      if (!this.speaking) { this.speaking = true; this.onUtteranceStart?.(); }
+      if (!this.speaking) { this.speaking = true; this.speechMs = 0; this.onUtteranceStart?.(); }
       this.silenceMs = 0;
+      this.speechMs += frameMs;
       const pcm = floatToPcm16(downsample(frame, this.sr));
       this.onChunk?.(pcm);
     } else if (this.speaking) {
@@ -77,9 +81,12 @@ export class MicCapture {
   }
 
   _endUtterance() {
+    const tooShort = this.speechMs < this.MIN_SPEECH_MS;
     this.speaking = false;
     this.silenceMs = 0;
-    this.onUtteranceEnd?.();
+    this.speechMs = 0;
+    if (tooShort) this.onUtteranceCancel?.();
+    else this.onUtteranceEnd?.();
   }
 }
 
