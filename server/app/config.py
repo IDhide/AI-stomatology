@@ -43,6 +43,11 @@ class Settings(BaseSettings):
     # PCM 16k — удобно для браузера (WebAudio) и минимальной задержки
     tts_output_format: str = Field(default="pcm_16000", alias="ELEVENLABS_OUTPUT_FORMAT")
 
+    # ── DIKIDI (только чтение записей) ──────────────────────────────
+    dikidi_api_key: str = Field(default="", alias="DIKIDI_API_KEY")
+    dikidi_company_id: str = Field(default="", alias="DIKIDI_COMPANY_ID")
+    dikidi_base_url: str = Field(default="https://api.dikidi.net", alias="DIKIDI_BASE_URL")
+
     # ── Supabase (память + pgvector для лиц) ────────────────────────
     supabase_url: str = Field(default="", alias="SUPABASE_URL")
     supabase_key: str = Field(default="", alias="SUPABASE_KEY")

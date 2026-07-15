@@ -44,6 +44,11 @@ class Conversation:
         self.max_history_pairs = max_history_pairs
         self.history: list[dict[str, str]] = []
         self._greeted = False
+        self._extra_context = ""
+
+    def set_context(self, text: str) -> None:
+        """Дополнительный блок для system-промпта (например, записи DIKIDI)."""
+        self._extra_context = text.strip()
 
     # ── публичные точки входа ────────────────────────────────────────
     async def greet(self, sink: AudioSink, *, name: str | None = None) -> str:
@@ -103,7 +108,10 @@ class Conversation:
         Стримит токены LLM и отдаёт их наружу законченными предложениями,
         чтобы TTS звучал естественно и начинался как можно раньше.
         """
-        messages = [{"role": "system", "content": self.persona.system}, *self.history]
+        system = self.persona.system
+        if self._extra_context:
+            system = f"{system}\n\n{self._extra_context}"
+        messages = [{"role": "system", "content": system}, *self.history]
         buffer = ""
         async for piece in self.llm.stream(messages):
             buffer += piece

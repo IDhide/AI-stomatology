@@ -76,6 +76,13 @@ html, body {
   display: flex; gap: 8px; opacity: .25; transition: opacity .2s;
 }
 #debug:hover { opacity: 1; }
+#mock-badge {
+  position: fixed; z-index: 30; right: 16px; top: 16px;
+  padding: 8px 14px; border-radius: 8px;
+  background: rgba(80, 40, 10, .75); border: 1px solid rgba(255,170,60,.5);
+  color: #ffcf8a; font-size: 13px; letter-spacing: .02em;
+}
+
 #debug button {
   padding: 8px 12px; border: 1px solid rgba(160,107,255,.4);
   background: rgba(20,10,40,.7); color: #cbb8ff;

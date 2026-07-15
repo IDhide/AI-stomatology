@@ -27,6 +27,7 @@ from fastapi.staticfiles import StaticFiles
 from loguru import logger
 
 from .config import get_settings
+from .dikidi_readonly import DikidiReadOnly
 from .orchestrator import Conversation
 from .persona import Persona
 from .providers import build_providers
@@ -54,6 +55,11 @@ async def ws_endpoint(ws: WebSocket):
     stt, llm, tts = build_providers(cfg)
     persona = Persona(cfg.prompts_path)
     conv = Conversation(stt, llm, tts, persona)
+    dikidi = DikidiReadOnly(
+        api_key=cfg.dikidi_api_key,
+        company_id=cfg.dikidi_company_id,
+        base_url=cfg.dikidi_base_url,
+    )
 
     audio_buf = bytearray()
     recording = False
@@ -95,6 +101,9 @@ async def ws_endpoint(ws: WebSocket):
 
             if mtype == "presence":
                 if data.get("present"):
+                    # свежие записи на сегодня → в контекст Оливии (read-only)
+                    bookings = await dikidi.today_bookings()
+                    conv.set_context(DikidiReadOnly.format_for_prompt(bookings))
                     await speak(lambda: conv.greet(audio_sink))
                 else:
                     await speak(lambda: conv.farewell(audio_sink))

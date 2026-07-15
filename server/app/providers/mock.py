@@ -49,7 +49,7 @@ class MockTTS(TTSProvider):
             for k in range(n):
                 t = (i + k) / self.SAMPLE_RATE
                 env = 0.5 + 0.5 * math.sin(t * 6.0)  # «слоги»
-                val = int(env * 8000 * math.sin(2 * math.pi * 180 * t))
+                val = int(env * 16000 * math.sin(2 * math.pi * 180 * t))
                 samples += struct.pack("<h", max(-32768, min(32767, val)))
             yield bytes(samples)
             i += n

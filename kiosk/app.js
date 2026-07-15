@@ -94,15 +94,17 @@ function send(obj) {
 
 function handleServer(msg) {
   switch (msg.type) {
-    case "state":
+    case "state": {
       serverState = msg.value;
-      statusEl.textContent = STATUS_TEXT[msg.value] ?? msg.value;
       viz.setState(msg.value);
       // Микрофон слушаем только когда система ждёт ответа пациента
       const listen = sessionActive && msg.value === "idle";
+      // «idle» внутри активной сессии — это «слушаю пациента», не режим ожидания
+      statusEl.textContent = listen ? "слушаю, говорите" : (STATUS_TEXT[msg.value] ?? msg.value);
       mic?.setEnabled(listen);
       if (listen) armSilenceTimer(); else clearSilenceTimer();
       break;
+    }
     case "transcript":
       // реплика пациента — можно не показывать, но полезно при отладке
       break;
@@ -115,8 +117,23 @@ function handleServer(msg) {
 }
 
 // ── Запуск (по клику — иначе браузер не даст микрофон/звук) ──────────
+// Бейдж «демо-режим», если сервер работает на заглушках (нет API-ключей)
+async function showMockBadgeIfNeeded() {
+  try {
+    const h = await (await fetch("/health")).json();
+    const mocks = ["llm", "stt", "tts"].filter((k) => h[k] === "mock");
+    if (mocks.length) {
+      const b = document.createElement("div");
+      b.id = "mock-badge";
+      b.textContent = `демо-режим: нет ключей для ${mocks.join(", ")}`;
+      document.body.appendChild(b);
+    }
+  } catch { /* сервер недоступен — переподключение покажет */ }
+}
+
 async function boot() {
   startBtn.remove();
+  showMockBadgeIfNeeded();
   viz = new Visualizer(sceneCanvas);
 
   player = new PcmPlayer((amp) => viz.setAmplitude(amp));
