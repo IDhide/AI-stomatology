@@ -97,12 +97,18 @@ function handleServer(msg) {
     case "state": {
       serverState = msg.value;
       viz.setState(msg.value);
-      // Микрофон слушаем только когда система ждёт ответа пациента
-      const listen = sessionActive && msg.value === "idle";
-      // «idle» внутри активной сессии — это «слушаю пациента», не режим ожидания
-      statusEl.textContent = listen ? "слушаю, говорите" : (STATUS_TEXT[msg.value] ?? msg.value);
-      mic?.setEnabled(listen);
-      if (listen) armSilenceTimer(); else clearSilenceTimer();
+      // Микрофон включён и в idle (ждём фразу), и в listening (фраза идёт!).
+      // Выключаем только пока Оливия думает или говорит — иначе, получив от
+      // сервера state=listening, мы бы сами обрывали запись на первом кадре.
+      const micOn = sessionActive && (msg.value === "idle" || msg.value === "listening");
+      statusEl.textContent =
+        sessionActive && msg.value === "idle"
+          ? "слушаю, говорите"
+          : (STATUS_TEXT[msg.value] ?? msg.value);
+      mic?.setEnabled(micOn);
+      // Таймер «10 секунд тишины» — только пока ждём начала фразы
+      if (sessionActive && msg.value === "idle") armSilenceTimer();
+      else clearSilenceTimer();
       break;
     }
     case "transcript":

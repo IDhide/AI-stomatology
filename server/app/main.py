@@ -37,6 +37,15 @@ app = FastAPI(title="Dental AI — Server")
 KIOSK_DIR = Path(__file__).resolve().parents[2] / "kiosk"
 
 
+@app.middleware("http")
+async def no_cache_static(request, call_next):
+    """Киоск-страница и её JS/CSS не должны залипать в кэше браузера."""
+    resp = await call_next(request)
+    if request.url.path == "/" or request.url.path.endswith((".js", ".css", ".html")):
+        resp.headers["Cache-Control"] = "no-cache"
+    return resp
+
+
 @app.get("/health")
 async def health():
     cfg = get_settings()
@@ -151,9 +160,10 @@ async def ws_endpoint(ws: WebSocket):
                     await send_state("idle")
 
             elif mtype == "utterance_start":
-                audio_buf.clear()
-                recording = True
-                await send_state("listening")
+                if not recording:
+                    audio_buf.clear()
+                    recording = True
+                    await send_state("listening")
 
             elif mtype == "utterance_cancel":
                 # клиент решил, что это был шорох, а не речь

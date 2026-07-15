@@ -56,7 +56,13 @@ export class MicCapture {
 
   setEnabled(v) {
     this.enabled = v;
-    if (!v && this.speaking) this._endUtterance();
+    if (!v && this.speaking) {
+      // Принудительное выключение посреди фразы — обрывок не отправляем
+      this.speaking = false;
+      this.silenceMs = 0;
+      this.speechMs = 0;
+      this.onUtteranceCancel?.();
+    }
   }
 
   _process(frame) {
