@@ -36,48 +36,56 @@ const FRAG = /* glsl */ `
     float t = uTime;
 
     // ── органическая (не круглая) форма кольца ────────────────────
-    float wob = (fbm(dir*1.4 + vec2(7.0, t*0.10)) - 0.5) * 0.14
-              + (fbm(dir*2.9 + vec2(-3.0, t*0.06)) - 0.5) * 0.07;
-    float r0 = 0.31 + wob + uAmp*0.02;    // радиус светящегося кольца
+    float wob = (fbm(dir*1.5 + vec2(3.0, t*0.08)) - 0.5) * 0.10
+              + (fbm(dir*3.1 + vec2(9.0, t*0.05)) - 0.5) * 0.05;
+    float r0 = 0.28 + wob + uAmp*0.02;    // радиус светящегося кольца
 
     float d = r - r0;
 
-    // ── профиль света: тёмное ядро, мягкое кольцо, широкий ореол ──
-    float ring  = exp(-d*d / 0.010);
-    float halo  = exp(-max(d, 0.0) * 3.2) * 0.55;
-    float core  = smoothstep(0.0, r0*0.95, r);          // затемнение ядра
-    float inner = exp(-max(-d, 0.0) * 6.0) * 0.45;      // свет у кромки ядра
+    // ── профиль света: тёмное ядро, компактное кольцо, ореол ──────
+    float ring  = exp(-d*d / 0.008);
+    float halo  = exp(-max(d, 0.0) * 3.8) * 0.50;
+    float core  = smoothstep(0.0, r0*0.92, r);          // затемнение ядра
+    float inner = exp(-max(-d, 0.0) * 7.0) * 0.40;      // свет у кромки ядра
 
-    // ── тонкие концентрические волны (главная фишка референса) ───
-    float wPhase = r*120.0 - t*2.2 + fbm(dir*2.2 + vec2(0.0, t*0.15))*6.0;
-    float waves  = 0.5 + 0.5*sin(wPhase);
-    waves = pow(waves, 2.0);                            // тонкие гребни
-    float wAmp = 0.10 + uActivity*0.06 + uAmp*0.38;     // голос раскачивает волны
-    float lit = (ring*0.85 + halo + inner) * mix(1.0 - wAmp, 1.0, waves);
-    lit *= mix(0.10, 1.0, core);                        // ядро остаётся тёмным
+    // ── ТОНКИЕ частые волны; речь явно их раскачивает ─────────────
+    float speed = 1.4 + uAmp*5.0;                       // говорит → волны бегут
+    float wPhase = r*170.0 - t*speed*1.8
+                 + fbm(dir*2.0 + vec2(0.0, t*0.10))*5.0;
+    float waves  = pow(0.5 + 0.5*sin(wPhase), 3.0);     // тонкие гребни
+    float wAmp = 0.06 + uActivity*0.04 + uAmp*0.60;     // тихо — почти гладко
+    float lit = (ring*0.9 + halo + inner) * mix(1.0 - wAmp, 1.0, waves);
+    lit *= mix(0.08, 1.0, core);                        // ядро остаётся тёмным
 
-    // ── цвет: глубокая синева, фиолет и розовые акценты ───────────
-    float hueA = fbm(dir*1.1 + vec2(21.0, t*0.08));
-    float hueB = fbm(dir*0.8 + vec2(-11.0, t*0.05));
-    vec3 deepBlue = vec3(0.06, 0.10, 0.65);
-    vec3 blue     = vec3(0.12, 0.25, 0.95);
-    vec3 violet   = vec3(0.38, 0.18, 0.95);
-    vec3 pink     = vec3(0.85, 0.38, 0.90);
-    vec3 cyan     = vec3(0.25, 0.55, 1.00);
+    // ── 3D-объём: свет сверху-слева, низ кольца в тени ────────────
+    float lightSide = dot(dir, normalize(vec2(-0.35, 0.80)));
+    lit *= 0.72 + 0.38*lightSide;
 
-    vec3 col = mix(deepBlue, blue, smoothstep(0.2, 0.65, hueA));
-    col = mix(col, violet, smoothstep(0.5, 0.85, hueB));
-    col = mix(col, pink,   smoothstep(0.78, 0.97, hueA) * 0.7);
-    col = mix(col, cyan,   smoothstep(0.25, 0.0, hueB) * 0.3);
+    // ── цвет: ФИОЛЕТОВАЯ гамма (бренд), розовые акценты ───────────
+    float hueA = fbm(dir*1.2 + vec2(17.0, t*0.06));
+    float hueB = fbm(dir*0.9 + vec2(-7.0, t*0.04));
+    vec3 deepViolet = vec3(0.16, 0.06, 0.45);
+    vec3 violet     = vec3(0.46, 0.20, 0.96);   // #7b3ff2 — бренд
+    vec3 magenta    = vec3(0.72, 0.28, 0.95);
+    vec3 pink       = vec3(0.95, 0.55, 0.95);
+    vec3 blueAccent = vec3(0.28, 0.28, 0.95);
 
-    // ── фон: глубокая тёмная синева, как на видео ─────────────────
-    vec3 bg = mix(vec3(0.025, 0.03, 0.14), vec3(0.008, 0.010, 0.05),
-                  smoothstep(0.0, 1.2, r));
+    vec3 col = mix(deepViolet, violet, smoothstep(0.15, 0.60, hueA));
+    col = mix(col, magenta, smoothstep(0.55, 0.85, hueB) * 0.8);
+    col = mix(col, pink,   smoothstep(0.80, 0.97, hueA) * 0.6);
+    col = mix(col, blueAccent, smoothstep(0.20, 0.0, hueA) * 0.25);
 
-    vec3 final = bg + col * lit * (0.50 + uAmp*0.45);
+    // ── фон: глубокий тёмно-фиолетовый с 3D-градиентом ядра ───────
+    vec3 bg = mix(vec3(0.050, 0.022, 0.120), vec3(0.014, 0.007, 0.040),
+                  smoothstep(0.0, 1.15, r));
+    // ядро не плоское: мягкий объёмный градиент, светлее к верху
+    bg += vec3(0.10, 0.05, 0.24) * exp(-r*3.0)
+        * (0.35 + 0.30*dot(dir, vec2(0.0, 1.0))) * (1.0 - core);
 
-    // виньетирование
-    final *= 1.0 - 0.35*smoothstep(0.6, 1.35, r);
+    vec3 final = bg + col * lit * (0.55 + uAmp*0.55);
+
+    // виньетирование — компактная «сфера света» в тёмном поле
+    final *= 1.0 - 0.42*smoothstep(0.55, 1.25, r);
 
     gl_FragColor = vec4(final, 1.0);
   }

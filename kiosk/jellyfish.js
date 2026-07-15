@@ -20,8 +20,8 @@ class Jelly {
     this.swayAmp = rnd(6, 18);
     this.tilt = rnd(-0.25, 0.25);
     this.tiltFreq = rnd(0.05, 0.12);
-    // приглушённые природные тона: бледно-голубой, реже — розоватый
-    this.hue = Math.random() < 0.75 ? rnd(190, 215) : rnd(300, 330);
+    // фирменная гамма: фиолетово-сиреневые, реже — розово-магентовые
+    this.hue = Math.random() < 0.7 ? rnd(255, 285) : rnd(295, 320);
     this.alpha = (0.55 + near * 0.50);
     this.tentacles = 24;
     this.blur = this.depth * 3.5;                  // дальние — мягче
@@ -68,20 +68,21 @@ class Jelly {
       ctx.stroke();
     }
 
-    // ── тонкие краевые щупальца ───────────────────────────────────
-    ctx.lineWidth = Math.max(0.5, size * 0.012);
+    // ── тонкие краевые щупальца: длинные, плавные S-изгибы ────────
+    ctx.lineWidth = Math.max(0.5, size * 0.010);
     for (let i = 0; i < this.tentacles; i++) {
       const t = (i / (this.tentacles - 1) - 0.5) * 2;
       const baseX = t * size * 0.92 * bellW;
-      const len = size * rnd(1.6, 2.1) * (1 - t * t * 0.3);
-      const sw = Math.sin(this.phase * 1.1 + i * 0.9) * size * 0.16 * (1 - Math.abs(t) * 0.4);
+      const len = size * (2.2 + (i % 5) * 0.18) * (1 - t * t * 0.25);
+      const s1 = Math.sin(this.phase * 0.9 + i * 0.8) * size * 0.20 * (1 - Math.abs(t) * 0.3);
+      const s2 = Math.sin(this.phase * 0.9 + i * 0.8 + 1.8) * size * 0.26;
       const grad = ctx.createLinearGradient(0, 0, 0, len);
       grad.addColorStop(0, `hsla(${hue}, 45%, 85%, ${0.30 * alpha})`);
       grad.addColorStop(1, `hsla(${hue}, 60%, 70%, 0)`);
       ctx.strokeStyle = grad;
       ctx.beginPath();
       ctx.moveTo(baseX, size * 0.18);
-      ctx.quadraticCurveTo(baseX + sw, len * 0.55, baseX + sw * 1.6, len);
+      ctx.bezierCurveTo(baseX + s1, len * 0.35, baseX - s2 * 0.7, len * 0.7, baseX + s2, len);
       ctx.stroke();
     }
 
@@ -185,11 +186,11 @@ export class JellyfishScene {
     const { ctx, canvas } = this;
     const { width: w, height: h } = canvas;
 
-    // глубина океана: сверху чуть светлее, книзу — чернильная
+    // глубина: тёмно-фиолетовая толща воды (бренд-гамма)
     const bg = ctx.createLinearGradient(0, 0, 0, h);
-    bg.addColorStop(0, "#0a1030");
-    bg.addColorStop(0.5, "#060a20");
-    bg.addColorStop(1, "#030512");
+    bg.addColorStop(0, "#140a33");
+    bg.addColorStop(0.5, "#0b0620");
+    bg.addColorStop(1, "#050310");
     ctx.globalCompositeOperation = "source-over";
     ctx.filter = "none";
     ctx.fillStyle = bg;
@@ -201,8 +202,8 @@ export class JellyfishScene {
     for (let i = 0; i < 3; i++) {
       const lx = w * (0.2 + i * 0.3) + Math.sin(t * 0.05 + i * 2) * w * 0.06;
       const lg = ctx.createLinearGradient(lx, 0, lx + w * 0.06, h * 0.8);
-      lg.addColorStop(0, "rgba(90,130,220,0.05)");
-      lg.addColorStop(1, "rgba(90,130,220,0)");
+      lg.addColorStop(0, "rgba(140,95,255,0.05)");
+      lg.addColorStop(1, "rgba(140,95,255,0)");
       ctx.fillStyle = lg;
       ctx.beginPath();
       ctx.moveTo(lx - w * 0.02, 0);
@@ -216,7 +217,7 @@ export class JellyfishScene {
     for (const m of this.motes) {
       m.y += m.vy * dt * 3;
       if (m.y > h) { m.y = -4; m.x = Math.random() * w; }
-      ctx.fillStyle = `rgba(170,195,235,${m.a})`;
+      ctx.fillStyle = `rgba(195,175,245,${m.a})`;
       ctx.beginPath();
       ctx.arc(m.x, m.y, m.r, 0, Math.PI * 2);
       ctx.fill();
