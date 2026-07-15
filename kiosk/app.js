@@ -1,10 +1,11 @@
 // Киоск: связывает WebSocket-бэкенд, микрофон, плеер и визуализатор.
 import { Visualizer } from "/visuals.js";
 import { MicCapture, PcmPlayer } from "/audio.js";
+import { JellyfishScene } from "/jellyfish.js";
 
 const $ = (s) => document.querySelector(s);
 const idleVideo = $("#idle-video");
-const idleFallback = $("#idle-fallback");
+const idleCanvas = $("#idle-canvas");
 const sceneCanvas = $("#scene");
 const caption = $("#caption");
 const statusEl = $("#status");
@@ -17,28 +18,38 @@ const STATUS_TEXT = {
   speaking: "говорю",
 };
 
-let ws, viz, mic, player;
+let ws, viz, mic, player, jelly, wakeRec;
 let sessionActive = false;
 let serverState = "idle";
+let videoOk = false;
 let silenceTimer = null;
 const SILENCE_END_MS = 10000; // из ТЗ: 10 секунд молчания → конец разговора
 
-// ── Загрузка видео с медузами (если файл есть) ──────────────────────
+// ── Своё видео с медузами приоритетнее canvas-сцены (если файл есть) ─
 idleVideo.src = "/assets/jellyfish.mp4";
-idleVideo.addEventListener("error", () => idleVideo.classList.add("hidden"));
+idleVideo.addEventListener("canplay", () => { videoOk = true; if (!sessionActive) showIdle(); });
+idleVideo.addEventListener("error", () => { videoOk = false; });
 
 function showIdle() {
   sceneCanvas.classList.add("hidden");
-  idleVideo.classList.toggle("hidden", !idleVideo.currentSrc);
-  idleFallback.classList.remove("hidden");
+  if (videoOk) {
+    idleVideo.classList.remove("hidden");
+    idleCanvas.classList.add("hidden");
+    jelly?.stop();
+  } else {
+    idleVideo.classList.add("hidden");
+    idleCanvas.classList.remove("hidden");
+    jelly?.start();
+  }
   caption.classList.remove("show");
-  statusEl.textContent = STATUS_TEXT.idle;
+  statusEl.textContent = wakeRec ? "скажите «Оливия», чтобы начать" : STATUS_TEXT.idle;
 }
 
 function showActive() {
   sceneCanvas.classList.remove("hidden");
   idleVideo.classList.add("hidden");
-  idleFallback.classList.add("hidden");
+  idleCanvas.classList.add("hidden");
+  jelly?.stop();
 }
 
 function setCaption(text) {
@@ -59,6 +70,8 @@ function clearSilenceTimer() {
 function startSession() {
   if (sessionActive) return;
   sessionActive = true;
+  document.body.classList.add("in-dialog"); // курсор прячем только в диалоге
+  stopWakeWord();
   showActive();
   send({ type: "presence", present: true }); // сервер инициирует приветствие
 }
@@ -66,9 +79,47 @@ function startSession() {
 function endSession() {
   if (!sessionActive) return;
   sessionActive = false;
+  document.body.classList.remove("in-dialog");
   clearSilenceTimer();
   mic?.setEnabled(false);
   send({ type: "presence", present: false }); // сервер прощается
+  startWakeWord();
+}
+
+// ── Wake word «Оливия» (Web Speech API, работает в Chrome) ──────────
+const WAKE_WORDS = ["оливия", "оливи", "аливия", "аливи", "olivia"];
+
+function startWakeWord() {
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!SR) return; // нет поддержки — остаются кнопки/камера
+  if (!wakeRec) {
+    wakeRec = new SR();
+    wakeRec.lang = "ru-RU";
+    wakeRec.continuous = true;
+    wakeRec.interimResults = true;
+    wakeRec.onresult = (e) => {
+      if (sessionActive) return;
+      for (let i = e.resultIndex; i < e.results.length; i++) {
+        const text = e.results[i][0].transcript.toLowerCase();
+        if (WAKE_WORDS.some((w) => text.includes(w))) {
+          startSession();
+          return;
+        }
+      }
+    };
+    // Chrome сам останавливает распознавание — перезапускаем, пока ждём
+    wakeRec.onend = () => {
+      if (!sessionActive && wakeRec) {
+        setTimeout(() => { try { wakeRec.start(); } catch {} }, 300);
+      }
+    };
+    wakeRec.onerror = () => {};
+  }
+  try { wakeRec.start(); } catch {}
+}
+
+function stopWakeWord() {
+  try { wakeRec?.stop(); } catch {}
 }
 
 // ── WebSocket ───────────────────────────────────────────────────────
@@ -109,6 +160,8 @@ function handleServer(msg) {
       // Таймер «10 секунд тишины» — только пока ждём начала фразы
       if (sessionActive && msg.value === "idle") armSilenceTimer();
       else clearSilenceTimer();
+      // Прощание закончилось → плавный возврат к медузам
+      if (!sessionActive && msg.value === "idle") showIdle();
       break;
     }
     case "transcript":
@@ -140,6 +193,7 @@ async function showMockBadgeIfNeeded() {
 async function boot() {
   startBtn.remove();
   showMockBadgeIfNeeded();
+  jelly = new JellyfishScene(idleCanvas);
   viz = new Visualizer(sceneCanvas);
 
   player = new PcmPlayer((amp) => viz.setAmplitude(amp));
@@ -154,6 +208,7 @@ async function boot() {
   await mic.init();
 
   connect();
+  startWakeWord();
   showIdle();
 }
 
