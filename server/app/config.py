@@ -31,7 +31,9 @@ class Settings(BaseSettings):
     # ── Grok (xAI, OpenAI-совместимый API) ──────────────────────────
     xai_api_key: str = Field(default="", alias="XAI_API_KEY")
     grok_base_url: str = Field(default="https://api.x.ai/v1", alias="GROK_BASE_URL")
-    grok_model: str = Field(default="grok-4", alias="GROK_MODEL")
+    # Для голоса нужна БЫСТРАЯ модель без reasoning: grok-4 «думает» перед
+    # ответом десятки секунд — пациент столько ждать не будет
+    grok_model: str = Field(default="grok-4-1-fast-non-reasoning", alias="GROK_MODEL")
     llm_temperature: float = Field(default=0.4, alias="LLM_TEMPERATURE")
     llm_max_tokens: int = Field(default=400, alias="LLM_MAX_TOKENS")
 

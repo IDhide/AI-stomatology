@@ -29,7 +29,7 @@ class GrokLLM(LLMProvider):
         self,
         api_key: str,
         base_url: str = "https://api.x.ai/v1",
-        model: str = "grok-4",
+        model: str = "grok-4-1-fast-non-reasoning",
         temperature: float = 0.4,
         max_tokens: int = 400,
     ):
@@ -38,10 +38,14 @@ class GrokLLM(LLMProvider):
         self.model = model
         self.temperature = temperature
         self.max_tokens = max_tokens
-        self._client = httpx.AsyncClient(timeout=httpx.Timeout(60.0, connect=10.0))
+        # Голосовой UX: ждать первый байт дольше ~20с бессмысленно — лучше
+        # быстро упасть в ретрай/фразу-заглушку, чем 60с тишины у стойки
+        self._client = httpx.AsyncClient(
+            timeout=httpx.Timeout(20.0, connect=5.0),
+        )
 
-    RETRIES = 3          # попытки при временных сбоях xAI
-    RETRY_DELAYS = (0.4, 1.0)
+    RETRIES = 4          # попытки при временных сбоях xAI
+    RETRY_DELAYS = (0.5, 1.2, 2.5)   # суммарно пересиживаем ~4с шторма
 
     async def stream(
         self,
