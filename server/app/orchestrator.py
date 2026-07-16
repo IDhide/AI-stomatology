@@ -45,6 +45,7 @@ class Conversation:
         self.history: list[dict[str, str]] = []
         self._greeted = False
         self._extra_context = ""
+        self.ended = False  # LLM поставил метку [КОНЕЦ] — диалог завершён
 
     def set_context(self, text: str) -> None:
         """Дополнительный блок для system-промпта (например, записи DIKIDI)."""
@@ -53,6 +54,7 @@ class Conversation:
     # ── публичные точки входа ────────────────────────────────────────
     async def greet(self, sink: AudioSink, *, name: str | None = None) -> str:
         """Первая инициатива системы — приветствие (из ТЗ)."""
+        self.ended = False
         text = self.persona.greeting(returning=self._greeted, name=name)
         self._greeted = True
         await self._speak(text, sink)
@@ -60,9 +62,36 @@ class Conversation:
         return text
 
     async def farewell(self, sink: AudioSink) -> str:
-        text = self.persona.farewell()
+        """
+        Прощание при уходе пациента. Если был разговор — прощание генерирует
+        LLM с учётом контекста (персональное, не однотипное); иначе шаблон.
+        """
+        text = ""
+        if self.history:
+            try:
+                messages = [
+                    {"role": "system", "content": self.persona.system},
+                    *self.history,
+                    {"role": "user", "content":
+                        "[Пациент отходит от стойки. Попрощайся ОДНОЙ короткой "
+                        "тёплой фразой по итогам разговора, без вопросов.]"},
+                ]
+                parts = [p async for p in self.llm.stream(messages)]
+                text = self._strip_end_marker("".join(parts))[0].strip()
+            except Exception:
+                logger.warning("LLM недоступен для прощания — шаблон")
+        if not text:
+            text = self.persona.farewell()
         await self._speak(text, sink)
         return text
+
+    # метка, которой LLM сигналит «диалог завершён» (не произносится)
+    _END_MARKER = re.compile(r"\s*\[\s*КОНЕЦ\s*\]\s*", re.IGNORECASE)
+
+    def _strip_end_marker(self, text: str) -> tuple[str, bool]:
+        if self._END_MARKER.search(text):
+            return self._END_MARKER.sub(" ", text).strip(), True
+        return text, False
 
     async def handle_utterance(
         self,
@@ -91,6 +120,11 @@ class Conversation:
         reply_parts: list[str] = []
         try:
             async for sentence in self._llm_sentences():
+                sentence, is_end = self._strip_end_marker(sentence)
+                if is_end:
+                    self.ended = True
+                if not sentence:
+                    continue
                 reply_parts.append(sentence)
                 if on_reply_text:
                     await on_reply_text(sentence)

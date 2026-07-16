@@ -172,6 +172,17 @@ function handleServer(msg) {
       break;
     case "speak_end":
       break;
+    case "conversation_end":
+      // Оливия попрощалась и считает диалог завершённым — уходим к медузам
+      if (sessionActive) {
+        sessionActive = false;
+        document.body.classList.remove("in-dialog");
+        clearSilenceTimer();
+        mic?.setEnabled(false);
+        startWakeWord();
+        showIdle();
+      }
+      break;
   }
 }
 
@@ -196,11 +207,17 @@ async function boot() {
   jelly = new JellyfishScene(idleCanvas);
   viz = new Visualizer(sceneCanvas);
 
-  player = new PcmPlayer(
-    (amp) => viz.setAmplitude(amp),
-    (bands) => viz.setBands(bands),
-  );
+  player = new PcmPlayer();
   await player.resume();
+
+  // каждый кадр снимаем амплитуду и спектр с РЕАЛЬНО звучащего звука —
+  // круг живёт всю фразу, а не только в момент прихода данных по сети
+  (function pump() {
+    const { amp, bands } = player.sample();
+    viz.setAmplitude(amp);
+    viz.setBands(bands);
+    requestAnimationFrame(pump);
+  })();
 
   mic = new MicCapture({
     onUtteranceStart: () => { clearSilenceTimer(); send({ type: "utterance_start" }); },

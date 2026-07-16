@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import pathlib
+import random
 
 import yaml
 from loguru import logger
@@ -32,8 +33,17 @@ class Persona:
             return {}
 
     def greeting(self, *, returning: bool = False, name: str | None = None) -> str:
-        key = "greeting_returning" if returning else "greeting"
-        text = (self.prompts.get(key) or "Здравствуйте! Чем могу помочь?").strip()
+        if returning:
+            text = (self.prompts.get("greeting_returning")
+                    or "Рада снова вас слышать. Чем могу помочь?").strip()
+        else:
+            # случайный вариант — приветствие не звучит однотипно
+            variants = self.prompts.get("greetings") or []
+            if variants:
+                text = random.choice(variants).strip()
+            else:
+                text = (self.prompts.get("greeting")
+                        or "Здравствуйте! Чем могу помочь?").strip()
         if name:
             # «Добрый день, Анна! ...» — персональное обращение из ТЗ
             text = f"{name}, {text[0].lower()}{text[1:]}" if text else text

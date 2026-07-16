@@ -96,39 +96,30 @@ export class MicCapture {
   }
 }
 
-// ── Потоковый плеер PCM16 @16k: амплитуда + 8-полосный спектр ───────
-// Спектр считается алгоритмом Гёрцеля прямо из чанка — визуализатор
-// получает настоящий «эквалайзер» голоса, а не случайный шум.
-const BAND_FREQS = [120, 250, 420, 700, 1100, 1700, 2600, 3800]; // Гц
-
-function goertzelBands(f32, sampleRate) {
-  const out = new Float32Array(BAND_FREQS.length);
-  const N = f32.length;
-  if (!N) return out;
-  for (let b = 0; b < BAND_FREQS.length; b++) {
-    const w = 2 * Math.PI * BAND_FREQS[b] / sampleRate;
-    const coeff = 2 * Math.cos(w);
-    let s0 = 0, s1 = 0, s2 = 0;
-    for (let i = 0; i < N; i++) {
-      s0 = f32[i] + coeff * s1 - s2;
-      s2 = s1; s1 = s0;
-    }
-    const power = s1 * s1 + s2 * s2 - coeff * s1 * s2;
-    out[b] = Math.sqrt(Math.max(0, power)) / N;
-  }
-  // нормализация: голосовая энергия падает с частотой — компенсируем
-  for (let b = 0; b < out.length; b++) {
-    out[b] = Math.min(1, out[b] * (14 + b * 10));
-  }
-  return out;
-}
+// ── Потоковый плеер PCM16 @16k с анализом РЕАЛЬНОГО звука ───────────
+// Весь звук идёт через AnalyserNode, и амплитуда/спектр снимаются с того,
+// что звучит из динамика ПРЯМО СЕЙЧАС (а не в момент прихода чанка по
+// сети). Визуализация синхронна с голосом всю фразу, а не первые секунды.
+const BAND_EDGES = [100, 200, 400, 700, 1100, 1700, 2600, 3900, 5500]; // Гц
 
 export class PcmPlayer {
-  constructor(onAmp, onBands) {
-    this.onAmp = onAmp;
-    this.onBands = onBands;
+  constructor() {
     this.ctx = new AudioContext({ sampleRate: TARGET_SR });
     this.nextTime = 0;
+
+    this.analyser = this.ctx.createAnalyser();
+    this.analyser.fftSize = 512;                  // бин = 31.25 Гц @16k
+    this.analyser.smoothingTimeConstant = 0.55;
+    this.analyser.connect(this.ctx.destination);
+
+    this.freqData = new Uint8Array(this.analyser.frequencyBinCount);
+    this.timeData = new Uint8Array(this.analyser.fftSize);
+    this.bands = new Float32Array(BAND_EDGES.length - 1);
+
+    // границы полос в бинах FFT
+    const binHz = TARGET_SR / this.analyser.fftSize;
+    this.binEdges = BAND_EDGES.map((f) => Math.max(0,
+      Math.min(this.analyser.frequencyBinCount - 1, Math.round(f / binHz))));
   }
 
   resume() { return this.ctx.resume(); }
@@ -138,23 +129,39 @@ export class PcmPlayer {
     const pcm = new Int16Array(bytes);
     if (!pcm.length) return;
     const f32 = new Float32Array(pcm.length);
-    let peak = 0;
-    for (let i = 0; i < pcm.length; i++) {
-      f32[i] = pcm[i] / 0x8000;
-      peak = Math.max(peak, Math.abs(f32[i]));
-    }
-    this.onAmp?.(peak);
-    if (this.onBands) this.onBands(goertzelBands(f32, TARGET_SR));
+    for (let i = 0; i < pcm.length; i++) f32[i] = pcm[i] / 0x8000;
 
     const buf = this.ctx.createBuffer(1, f32.length, TARGET_SR);
     buf.copyToChannel(f32, 0);
     const node = this.ctx.createBufferSource();
     node.buffer = buf;
-    node.connect(this.ctx.destination);
+    node.connect(this.analyser);   // → анализатор → динамик
 
     const now = this.ctx.currentTime;
     if (this.nextTime < now) this.nextTime = now + 0.02;
     node.start(this.nextTime);
     this.nextTime += buf.duration;
+  }
+
+  // Снять текущие амплитуду и 8 полос с воспроизводимого звука.
+  // Вызывается визуализатором каждый кадр.
+  sample() {
+    this.analyser.getByteTimeDomainData(this.timeData);
+    let peak = 0;
+    for (let i = 0; i < this.timeData.length; i++) {
+      peak = Math.max(peak, Math.abs(this.timeData[i] - 128));
+    }
+    const amp = peak / 128;
+
+    this.analyser.getByteFrequencyData(this.freqData);
+    for (let b = 0; b < this.bands.length; b++) {
+      const from = this.binEdges[b], to = Math.max(from + 1, this.binEdges[b + 1]);
+      let sum = 0;
+      for (let i = from; i < to; i++) sum += this.freqData[i];
+      const avg = sum / (to - from) / 255;
+      // высокие частоты тише — компенсируем усилением
+      this.bands[b] = Math.min(1, avg * (1.1 + b * 0.35));
+    }
+    return { amp, bands: this.bands };
   }
 }

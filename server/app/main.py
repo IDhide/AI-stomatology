@@ -205,6 +205,11 @@ async def ws_endpoint(ws: WebSocket):
                     # ни одна ошибка STT/LLM/TTS не должна ронять соединение
                     logger.exception("Ошибка обработки реплики")
                 await ws.send_json({"type": "speak_end"})
+                if conv.ended:
+                    # LLM поставил метку [КОНЕЦ]: диалог завершён,
+                    # киоск возвращается к медузам без повторного прощания
+                    logger.info("Диалог завершён — возврат в режим ожидания")
+                    await ws.send_json({"type": "conversation_end"})
                 await send_state("idle")
 
     except WebSocketDisconnect:
