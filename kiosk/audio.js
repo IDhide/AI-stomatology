@@ -96,10 +96,37 @@ export class MicCapture {
   }
 }
 
-// ── Потоковый плеер PCM16 @16k с колбэком амплитуды ─────────────────
+// ── Потоковый плеер PCM16 @16k: амплитуда + 8-полосный спектр ───────
+// Спектр считается алгоритмом Гёрцеля прямо из чанка — визуализатор
+// получает настоящий «эквалайзер» голоса, а не случайный шум.
+const BAND_FREQS = [120, 250, 420, 700, 1100, 1700, 2600, 3800]; // Гц
+
+function goertzelBands(f32, sampleRate) {
+  const out = new Float32Array(BAND_FREQS.length);
+  const N = f32.length;
+  if (!N) return out;
+  for (let b = 0; b < BAND_FREQS.length; b++) {
+    const w = 2 * Math.PI * BAND_FREQS[b] / sampleRate;
+    const coeff = 2 * Math.cos(w);
+    let s0 = 0, s1 = 0, s2 = 0;
+    for (let i = 0; i < N; i++) {
+      s0 = f32[i] + coeff * s1 - s2;
+      s2 = s1; s1 = s0;
+    }
+    const power = s1 * s1 + s2 * s2 - coeff * s1 * s2;
+    out[b] = Math.sqrt(Math.max(0, power)) / N;
+  }
+  // нормализация: голосовая энергия падает с частотой — компенсируем
+  for (let b = 0; b < out.length; b++) {
+    out[b] = Math.min(1, out[b] * (14 + b * 10));
+  }
+  return out;
+}
+
 export class PcmPlayer {
-  constructor(onAmp) {
+  constructor(onAmp, onBands) {
     this.onAmp = onAmp;
+    this.onBands = onBands;
     this.ctx = new AudioContext({ sampleRate: TARGET_SR });
     this.nextTime = 0;
   }
@@ -117,6 +144,7 @@ export class PcmPlayer {
       peak = Math.max(peak, Math.abs(f32[i]));
     }
     this.onAmp?.(peak);
+    if (this.onBands) this.onBands(goertzelBands(f32, TARGET_SR));
 
     const buf = this.ctx.createBuffer(1, f32.length, TARGET_SR);
     buf.copyToChannel(f32, 0);

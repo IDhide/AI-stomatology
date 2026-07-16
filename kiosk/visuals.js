@@ -12,8 +12,9 @@ const FRAG = /* glsl */ `
   precision highp float;
   uniform vec2  uRes;
   uniform float uTime;
-  uniform float uAmp;      // 0..1 голос
+  uniform float uAmp;      // 0..1 голос (общая громкость)
   uniform float uActivity; // «дыхание» состояния
+  uniform float uBands[8]; // 8 частотных полос голоса (эквалайзер)
 
   // ── value noise + fbm ──────────────────────────────────────────
   float hash(vec2 p){ return fract(sin(dot(p, vec2(127.1,311.7)))*43758.5453123); }
@@ -35,25 +36,40 @@ const FRAG = /* glsl */ `
     vec2 dir = uv / max(r, 1e-4);
     float t = uTime;
 
-    // ── органическая (не круглая) форма кольца ────────────────────
-    float wob = (fbm(dir*1.5 + vec2(3.0, t*0.08)) - 0.5) * 0.10
-              + (fbm(dir*3.1 + vec2(9.0, t*0.05)) - 0.5) * 0.05;
-    float r0 = 0.28 + wob + uAmp*0.02;    // радиус светящегося кольца
+    // ── эквалайзер по секторам: каждой стороне — своя полоса голоса ─
+    // угол 0..1 по кругу → плавная интерполяция между 8 полосами
+    float a01 = atan(uv.y, uv.x) / 6.2831853 + 0.5;
+    float bp = a01 * 8.0;
+    float band = 0.0;
+    for (int i = 0; i < 8; i++) {
+      float fi = float(i);
+      float w = max(0.0, 1.0 - abs(bp - fi));
+      w = max(w, max(0.0, 1.0 - abs(bp - fi - 8.0)));   // замыкание круга
+      w = max(w, max(0.0, 1.0 - abs(bp - fi + 8.0)));
+      band += uBands[i] * w;
+    }
+
+    // ── форма кольца: лёгкая органика + выпуклости от полос голоса ─
+    float wob = (fbm(dir*1.5 + vec2(3.0, t*0.08)) - 0.5) * 0.07
+              + band * 0.05;                            // «кривизна» от голоса
+    float r0 = 0.27 + wob + uAmp*0.015;
 
     float d = r - r0;
 
     // ── профиль света: тёмное ядро, компактное кольцо, ореол ──────
     float ring  = exp(-d*d / 0.008);
-    float halo  = exp(-max(d, 0.0) * 3.8) * 0.50;
+    float halo  = exp(-max(d, 0.0) * 5.5) * 0.45;       // ореол компактнее
     float core  = smoothstep(0.0, r0*0.92, r);          // затемнение ядра
     float inner = exp(-max(-d, 0.0) * 7.0) * 0.40;      // свет у кромки ядра
 
-    // ── ТОНКИЕ частые волны; речь явно их раскачивает ─────────────
-    float speed = 1.4 + uAmp*5.0;                       // говорит → волны бегут
-    float wPhase = r*170.0 - t*speed*1.8
-                 + fbm(dir*2.0 + vec2(0.0, t*0.10))*5.0;
+    // ── волны: только вокруг шара, дальше быстро гаснут ───────────
+    float waveZone = exp(-max(d, 0.0) * 6.0);           // радиус распространения
+    float speed = 1.4 + uAmp*4.0;
+    float wPhase = r*150.0 - t*speed*1.8
+                 + fbm(dir*2.0 + vec2(0.0, t*0.10))*4.0;
     float waves  = pow(0.5 + 0.5*sin(wPhase), 3.0);     // тонкие гребни
-    float wAmp = 0.06 + uActivity*0.04 + uAmp*0.60;     // тихо — почти гладко
+    // амплитуда волн в направлении сектора = его полоса голоса
+    float wAmp = (0.05 + uActivity*0.03 + band*0.55 + uAmp*0.10) * waveZone;
     float lit = (ring*0.9 + halo + inner) * mix(1.0 - wAmp, 1.0, waves);
     lit *= mix(0.08, 1.0, core);                        // ядро остаётся тёмным
 
@@ -137,11 +153,15 @@ export class Visualizer {
     this.scene = new THREE.Scene();
     this.camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
 
+    this.bands = new Float32Array(8);        // сглаженные значения
+    this.bandTargets = new Float32Array(8);  // свежие с плеера
+
     this.uniforms = {
       uRes: { value: new THREE.Vector2(1, 1) },
       uTime: { value: 0 },
       uAmp: { value: 0 },
       uActivity: { value: 0.15 },
+      uBands: { value: this.bands },
     };
 
     const quad = new THREE.Mesh(
@@ -170,6 +190,11 @@ export class Visualizer {
   // 0..1 — амплитуда текущего аудио-чанка TTS
   setAmplitude(a) { this.ampTarget = Math.min(1, a * 1.4); }
 
+  // 8 частотных полос голоса (эквалайзер) от PcmPlayer
+  setBands(bands) {
+    for (let i = 0; i < 8; i++) this.bandTargets[i] = Math.min(1, bands[i]);
+  }
+
   setState(state) {
     this.activity = { idle: 0.1, listening: 0.35, thinking: 0.7, speaking: 0.5 }[state] ?? 0.15;
   }
@@ -182,6 +207,13 @@ export class Visualizer {
     const k = this.ampTarget > this.amp ? 0.5 : 0.05;
     this.amp += (this.ampTarget - this.amp) * k;
     this.ampTarget *= 0.92;
+
+    // полосы эквалайзера: атака быстрая, спад плавный, затем затухание
+    for (let i = 0; i < 8; i++) {
+      const kb = this.bandTargets[i] > this.bands[i] ? 0.45 : 0.07;
+      this.bands[i] += (this.bandTargets[i] - this.bands[i]) * kb;
+      this.bandTargets[i] *= 0.90;
+    }
 
     this.uniforms.uTime.value += dt * (0.8 + this.activity * 0.6 + this.amp * 0.8);
     this.uniforms.uAmp.value = this.amp;

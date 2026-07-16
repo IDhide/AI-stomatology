@@ -196,7 +196,10 @@ async function boot() {
   jelly = new JellyfishScene(idleCanvas);
   viz = new Visualizer(sceneCanvas);
 
-  player = new PcmPlayer((amp) => viz.setAmplitude(amp));
+  player = new PcmPlayer(
+    (amp) => viz.setAmplitude(amp),
+    (bands) => viz.setBands(bands),
+  );
   await player.resume();
 
   mic = new MicCapture({
