@@ -89,11 +89,23 @@ class Conversation:
         self.history.append({"role": "user", "content": user_text})
 
         reply_parts: list[str] = []
-        async for sentence in self._llm_sentences():
-            reply_parts.append(sentence)
+        try:
+            async for sentence in self._llm_sentences():
+                reply_parts.append(sentence)
+                if on_reply_text:
+                    await on_reply_text(sentence)
+                await self._speak(sentence, sink)
+        except Exception:
+            # LLM упал даже после ретраев — Оливия не молчит, а говорит
+            # запасную фразу; разговор продолжается
+            logger.exception("LLM недоступен — говорю запасную фразу")
+            fallback = (self.persona.prompts.get("fallback_long")
+                        or "Прошу прощения, у меня небольшая заминка. "
+                           "Повторите, пожалуйста, ещё раз.").strip()
             if on_reply_text:
-                await on_reply_text(sentence)
-            await self._speak(sentence, sink)
+                await on_reply_text(fallback)
+            await self._speak(fallback, sink)
+            reply_parts = [fallback]
 
         reply = " ".join(reply_parts).strip()
         if reply:

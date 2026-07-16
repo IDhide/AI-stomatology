@@ -20,12 +20,18 @@ FastAPI backend: WebSocket-мост между киоском и стримин�
 from __future__ import annotations
 
 import json
+import sys
 from pathlib import Path
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from loguru import logger
+
+# Компактные трейсбеки: без дампа переменных на 200 строк (diagnose)
+# и без раскрутки стека через весь uvicorn (backtrace)
+logger.remove()
+logger.add(sys.stderr, level="DEBUG", backtrace=False, diagnose=False)
 
 from .config import get_settings
 from .dikidi_readonly import DikidiReadOnly
