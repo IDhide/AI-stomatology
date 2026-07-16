@@ -19,6 +19,7 @@ FastAPI backend: WebSocket-мост между киоском и стримин�
 """
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
@@ -126,6 +127,11 @@ async def ws_endpoint(ws: WebSocket):
         while True:
             msg = await ws.receive()
 
+            # клиент отключился (закрыл вкладку / Ctrl+C) — выходим тихо,
+            # иначе следующий receive() бросит RuntimeError
+            if msg.get("type") == "websocket.disconnect":
+                break
+
             if "bytes" in msg and msg["bytes"] is not None:
                 if recording:
                     audio_buf.extend(msg["bytes"])
@@ -133,8 +139,6 @@ async def ws_endpoint(ws: WebSocket):
 
             if "text" not in msg or msg["text"] is None:
                 continue
-
-            import json
 
             try:
                 data = json.loads(msg["text"])
