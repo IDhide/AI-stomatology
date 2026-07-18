@@ -65,6 +65,8 @@ class Settings(BaseSettings):
     regreet_minutes: int = Field(default=45, alias="REGREET_MINUTES")
 
     prompts_path: str = Field(default="config/prompts.yaml", alias="PROMPTS_PATH")
+    # Папка с логами разговоров (создаётся при первом запуске)
+    conversations_dir: str = Field(default="data/conversations", alias="CONVERSATIONS_DIR")
 
     @property
     def has_grok(self) -> bool:

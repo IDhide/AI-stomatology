@@ -24,6 +24,12 @@ from .providers.base import LLMProvider, STTProvider, TTSProvider
 # по фразам, а не по словам (иначе просодия рвётся).
 _SENTENCE_END = re.compile(r"([.!?…]+)(\s+|$)")
 
+# Пациент прощается — чтобы завершить диалог локально, даже если LLM лежит
+_FAREWELL_RE = re.compile(
+    r"\b(до свидания|до встречи|всего доброго|всего хорошего|пока|прощайте)\b",
+    re.IGNORECASE,
+)
+
 AudioSink = Callable[[bytes], Awaitable[None]]
 
 
@@ -129,13 +135,18 @@ class Conversation:
                 if on_reply_text:
                     await on_reply_text(sentence)
                 await self._speak(sentence, sink)
-        except Exception:
-            # LLM упал даже после ретраев — Оливия не молчит, а говорит
-            # запасную фразу; разговор продолжается
-            logger.exception("LLM недоступен — говорю запасную фразу")
-            fallback = (self.persona.prompts.get("fallback_long")
-                        or "Прошу прощения, у меня небольшая заминка. "
-                           "Повторите, пожалуйста, ещё раз.").strip()
+        except Exception as e:
+            # LLM упал даже после ретраев — Оливия не молчит.
+            logger.error(f"LLM недоступен ({type(e).__name__}) — запасное поведение")
+            if _FAREWELL_RE.search(user_text):
+                # пациент прощается — прощаемся шаблоном и завершаем диалог,
+                # чтобы киоск не завис в разговоре при лежащем API
+                fallback = self.persona.farewell()
+                self.ended = True
+            else:
+                fallback = (self.persona.prompts.get("fallback_error")
+                            or "Прошу прощения, у меня небольшая заминка со "
+                               "связью. Повторите, пожалуйста, ещё раз.").strip()
             if on_reply_text:
                 await on_reply_text(fallback)
             await self._speak(fallback, sink)

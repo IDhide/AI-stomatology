@@ -34,6 +34,7 @@ logger.remove()
 logger.add(sys.stderr, level="DEBUG", backtrace=False, diagnose=False)
 
 from .config import get_settings
+from .conversation_log import ConversationLog
 from .dikidi_readonly import DikidiReadOnly
 from .orchestrator import Conversation
 from .persona import Persona
@@ -59,6 +60,8 @@ async def health():
     return {
         "status": "ok",
         "llm": cfg.llm_provider if cfg.has_grok else "mock",
+        # какая именно модель загружена — видно сразу, без чтения логов
+        "llm_model": cfg.grok_model if cfg.has_grok else None,
         "stt": cfg.stt_provider if cfg.has_elevenlabs else "mock",
         "tts": cfg.tts_provider if (cfg.has_elevenlabs and cfg.tts_voice_id) else "mock",
     }
@@ -111,6 +114,7 @@ async def ws_endpoint(ws: WebSocket):
         base_url=cfg.dikidi_base_url,
         demo=cfg.dikidi_demo,
     )
+    convlog = ConversationLog(cfg.conversations_dir)
 
     audio_buf = bytearray()
     recording = False
@@ -156,14 +160,26 @@ async def ws_endpoint(ws: WebSocket):
             if mtype == "presence":
                 try:
                     if data.get("present"):
+                        convlog.start()
                         # свежие записи на сегодня → в контекст Оливии (read-only)
                         bookings = await dikidi.today_bookings()
                         conv.set_context(
                             DikidiReadOnly.format_for_prompt(bookings, dikidi.available)
                         )
-                        await speak(lambda: conv.greet(audio_sink))
+                        greeting_holder: list[str] = []
+                        async def _greet():
+                            greeting_holder.append(await conv.greet(audio_sink))
+                        await speak(_greet)
+                        if greeting_holder:
+                            convlog.log("assistant", greeting_holder[0])
                     else:
-                        await speak(lambda: conv.farewell(audio_sink))
+                        farewell_holder: list[str] = []
+                        async def _farewell():
+                            farewell_holder.append(await conv.farewell(audio_sink))
+                        await speak(_farewell)
+                        if farewell_holder:
+                            convlog.log("assistant", farewell_holder[0])
+                        convlog.end("patient_left")
                 except Exception:
                     logger.exception("Ошибка при приветствии/прощании")
                     await ws.send_json({"type": "speak_end"})
@@ -188,9 +204,13 @@ async def ws_endpoint(ws: WebSocket):
                 await send_state("thinking")
 
                 async def on_transcript(t: str):
+                    convlog.log("user", t)
                     await ws.send_json({"type": "transcript", "text": t})
 
+                reply_buf: list[str] = []
+
                 async def on_reply_text(t: str):
+                    reply_buf.append(t)
                     await ws.send_json({"type": "reply", "text": t})
 
                 await send_state("speaking")
@@ -204,16 +224,22 @@ async def ws_endpoint(ws: WebSocket):
                 except Exception:
                     # ни одна ошибка STT/LLM/TTS не должна ронять соединение
                     logger.exception("Ошибка обработки реплики")
+                if reply_buf:
+                    convlog.log("assistant", " ".join(reply_buf))
                 await ws.send_json({"type": "speak_end"})
                 if conv.ended:
                     # LLM поставил метку [КОНЕЦ]: диалог завершён,
                     # киоск возвращается к медузам без повторного прощания
                     logger.info("Диалог завершён — возврат в режим ожидания")
+                    convlog.end("assistant_closed")
                     await ws.send_json({"type": "conversation_end"})
                 await send_state("idle")
 
     except WebSocketDisconnect:
         logger.info("Киоск отключён")
+    finally:
+        # не теряем расшифровку, если связь оборвалась посреди разговора
+        convlog.end("disconnect")
 
 
 # Раздаём статику киоска последней (чтобы /ws и /health имели приоритет)
