@@ -20,7 +20,7 @@ const BASE = {
     maxCount: 9,
     minSpeed: 0.02,
     maxSpeed: 0.08,
-    glowIntensity: 0.7,
+    glowIntensity: 0.55,
     tentacleSegments: 24,
   },
   particles: {
@@ -49,9 +49,9 @@ const BASE = {
   render: {
     pixelRatio: 1.0,
     bloom: true,
-    bloomStrength: 0.65,
-    bloomRadius: 0.75,
-    bloomThreshold: 0.72,
+    bloomStrength: 0.55,
+    bloomRadius: 0.8,
+    bloomThreshold: 0.78,
     fog: true,
     depthEffects: true,
   },

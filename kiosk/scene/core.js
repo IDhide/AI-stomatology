@@ -59,9 +59,12 @@ const SPHERE_FRAG = /* glsl */ `
     col = col / (1.0 + col * 0.55);
     col *= (0.6 + 0.6 * uIntensity);
 
-    // полупрозрачная поверхность: в ядре — дымка, в активной сфере — плотнее
-    float base = mix(0.06, 0.62, uActive);
-    float alpha = clamp((base + fres * 0.45) * (0.5 + uIntensity * 0.6), 0.0, 0.92);
+    // в режиме ожидания твёрдая сфера почти невидима — остаётся лишь мягкая
+    // дымка-гало (§8.2: слабозаметное ядро без чёткой границы)
+    float vis = 0.08 + 0.92 * uActive;
+    col *= vis;
+    float base = mix(0.02, 0.60, uActive);
+    float alpha = clamp((base + fres * 0.42) * (0.5 + uIntensity * 0.6) * vis, 0.0, 0.92);
     gl_FragColor = vec4(col, alpha);
   }
 `;
