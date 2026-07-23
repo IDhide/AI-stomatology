@@ -1,49 +1,32 @@
-// Киоск: связывает WebSocket-бэкенд, микрофон, плеер и визуализатор.
-import { Visualizer } from "/visuals.js";
+// Киоск: связывает WebSocket-бэкенд, микрофон, плеер и сцену «Океан Оливии».
+// Сцена работает непрерывно (режим ожидания = живой подводный мир); переход в
+// активный режим происходит внутри одной сцены, без смены страницы (ТЗ §12).
+import { OceanScene, loadConfig, autoQuality } from "/visuals.js";
 import { MicCapture, PcmPlayer } from "/audio.js";
 
 const $ = (s) => document.querySelector(s);
-const idleVideo = $("#idle-video");
-const idleFallback = $("#idle-fallback");
 const sceneCanvas = $("#scene");
+const idleFallback = $("#idle-fallback");
 const caption = $("#caption");
 const statusEl = $("#status");
 const startBtn = $("#start-btn");
 
 const STATUS_TEXT = {
-  idle: "режим ожидания",
-  listening: "слушаю",
-  thinking: "думаю",
-  speaking: "говорю",
+  idle: "", listening: "слушаю", thinking: "думаю", speaking: "говорю", greeting: "",
 };
 
 let ws, viz, mic, player;
 let sessionActive = false;
-let serverState = "idle";
 let silenceTimer = null;
-const SILENCE_END_MS = 10000; // из ТЗ: 10 секунд молчания → конец разговора
-
-// ── Загрузка видео с медузами (если файл есть) ──────────────────────
-idleVideo.src = "/assets/jellyfish.mp4";
-idleVideo.addEventListener("error", () => idleVideo.classList.add("hidden"));
-
-function showIdle() {
-  sceneCanvas.classList.add("hidden");
-  idleVideo.classList.toggle("hidden", !idleVideo.currentSrc);
-  idleFallback.classList.remove("hidden");
-  caption.classList.remove("show");
-  statusEl.textContent = STATUS_TEXT.idle;
-}
-
-function showActive() {
-  sceneCanvas.classList.remove("hidden");
-  idleVideo.classList.add("hidden");
-  idleFallback.classList.add("hidden");
-}
+const SILENCE_END_MS = 10000; // 10 секунд молчания → конец разговора
 
 function setCaption(text) {
+  if (!text) { caption.classList.remove("show"); return; }
   caption.textContent = text;
   caption.classList.add("show");
+}
+function setStatus(state) {
+  statusEl.textContent = STATUS_TEXT[state] ?? "";
 }
 
 // ── Таймер «10 секунд молчания» ─────────────────────────────────────
@@ -55,12 +38,12 @@ function clearSilenceTimer() {
   if (silenceTimer) { clearTimeout(silenceTimer); silenceTimer = null; }
 }
 
-// ── Управление сессией ──────────────────────────────────────────────
+// ── Управление сессией (присутствие человека) ───────────────────────
 function startSession() {
   if (sessionActive) return;
   sessionActive = true;
-  showActive();
-  send({ type: "presence", present: true }); // сервер инициирует приветствие
+  viz?.setPresence(true);              // ядро → активная сфера (awakening)
+  send({ type: "presence", present: true });
 }
 
 function endSession() {
@@ -68,7 +51,9 @@ function endSession() {
   sessionActive = false;
   clearSilenceTimer();
   mic?.setEnabled(false);
-  send({ type: "presence", present: false }); // сервер прощается
+  viz?.setPresence(false);             // прощание → возврат в ожидание
+  setCaption("");
+  send({ type: "presence", present: false });
 }
 
 // ── WebSocket ───────────────────────────────────────────────────────
@@ -76,16 +61,12 @@ function connect() {
   const proto = location.protocol === "https:" ? "wss" : "ws";
   ws = new WebSocket(`${proto}://${location.host}/ws`);
   ws.binaryType = "arraybuffer";
-
   ws.onmessage = (ev) => {
-    if (ev.data instanceof ArrayBuffer) {
-      player.push(ev.data);            // TTS-аудио → колонка + амплитуда шара
-      return;
-    }
-    const msg = JSON.parse(ev.data);
-    handleServer(msg);
+    if (ev.data instanceof ArrayBuffer) { player.push(ev.data); return; }
+    try { handleServer(JSON.parse(ev.data)); } catch (_) {}
   };
-  ws.onclose = () => setTimeout(connect, 1500); // авто-reconnect
+  ws.onclose = () => setTimeout(connect, 1500); // авто-reconnect; сцена не прерывается
+  ws.onerror = () => {};
 }
 
 function send(obj) {
@@ -94,22 +75,24 @@ function send(obj) {
 
 function handleServer(msg) {
   switch (msg.type) {
-    case "state":
-      serverState = msg.value;
-      statusEl.textContent = STATUS_TEXT[msg.value] ?? msg.value;
-      viz.setState(msg.value);
-      // Микрофон слушаем только когда система ждёт ответа пациента
-      const listen = sessionActive && msg.value === "idle";
+    case "state": {
+      const v = msg.value;
+      setStatus(v);
+      viz?.setState(v);
+      // Микрофон слушаем, когда система ждёт ответа пациента
+      const listen = sessionActive && v === "idle";
       mic?.setEnabled(listen);
       if (listen) armSilenceTimer(); else clearSilenceTimer();
       break;
-    case "transcript":
-      // реплика пациента — можно не показывать, но полезно при отладке
+    }
+    case "presence":
+      if (msg.value) startSession(); else endSession();
       break;
     case "reply":
       setCaption(msg.text);
       break;
     case "speak_end":
+    case "transcript":
       break;
   }
 }
@@ -117,28 +100,48 @@ function handleServer(msg) {
 // ── Запуск (по клику — иначе браузер не даст микрофон/звук) ──────────
 async function boot() {
   startBtn.remove();
-  viz = new Visualizer(sceneCanvas);
+  idleFallback.classList.add("hidden");
+
+  const cfg = await loadConfig();
+  if (!cfg.quality) cfg.quality = autoQuality();
+
+  try {
+    viz = new OceanScene(sceneCanvas, cfg);
+    sceneCanvas.classList.remove("hidden");
+    if (location.search.includes("debug")) window.__ocean = viz; // ручной прогон состояний
+  } catch (e) {
+    console.error("WebGL недоступен — включён запасной фон", e);
+    idleFallback.classList.remove("hidden"); // CSS-fallback (ТЗ §24)
+    return;
+  }
 
   player = new PcmPlayer((amp) => viz.setAmplitude(amp));
   await player.resume();
+
+  // Каждый кадр отдаём сфере реальные уровни воспроизводимого аудио (§16).
+  const feedAudio = () => {
+    if (player) viz.setAudioLevels(player.getLevels());
+    requestAnimationFrame(feedAudio);
+  };
+  requestAnimationFrame(feedAudio);
 
   mic = new MicCapture({
     onUtteranceStart: () => { clearSilenceTimer(); send({ type: "utterance_start" }); },
     onChunk: (pcm) => { if (ws?.readyState === WebSocket.OPEN) ws.send(pcm.buffer); },
     onUtteranceEnd: () => send({ type: "utterance_end" }),
   });
-  await mic.init();
+  try { await mic.init(); } catch (_) { /* без микрофона сцена всё равно работает */ }
 
   connect();
-  showIdle();
 }
 
 startBtn.addEventListener("click", boot);
 
-// ── Отладочная панель (тест на MacBook без камеры) ──────────────────
+// ── Отладочная панель (тест без камеры), включается через ?debug ─────
+if (location.search.includes("debug")) $("#debug").classList.add("on");
 $("#debug").addEventListener("click", (e) => {
   const act = e.target.dataset.act;
-  if (act === "enter") startSession();
+  if (act === "enter") { startSession(); viz?.setState("greeting"); }
   else if (act === "leave") endSession();
-  else if (act === "talk") mic?.setEnabled(true);
+  else if (act === "talk") { viz?.setState("listening"); mic?.setEnabled(true); }
 });

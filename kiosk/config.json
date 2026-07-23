@@ -1,0 +1,28 @@
+{
+  "quality": "high",
+  "jellyfish": {
+    "minCount": 5,
+    "maxCount": 9,
+    "minSpeed": 0.02,
+    "maxSpeed": 0.08,
+    "glowIntensity": 0.7
+  },
+  "particles": {
+    "count": 2500,
+    "brightness": 0.4
+  },
+  "core": {
+    "idleIntensity": 0.15,
+    "activeIntensity": 1.0,
+    "pulseIntervalMin": 8,
+    "pulseIntervalMax": 18
+  },
+  "camera": {
+    "driftIntensity": 0.12,
+    "zoomIntensity": 0.04
+  },
+  "transitions": {
+    "awakeningDuration": 1.2,
+    "returnDuration": 2.2
+  }
+}

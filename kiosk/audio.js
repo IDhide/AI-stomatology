@@ -83,12 +83,24 @@ export class MicCapture {
   }
 }
 
-// ── Потоковый плеер PCM16 @16k с колбэком амплитуды ─────────────────
+// ── Потоковый плеер PCM16 @16k с частотным анализом (ТЗ §16) ─────────
+// Аудио проходит через AnalyserNode → визуал синхронизирован именно с тем,
+// что звучит из колонок (RMS + низкие/средние/высокие частоты).
 export class PcmPlayer {
   constructor(onAmp) {
     this.onAmp = onAmp;
     this.ctx = new AudioContext({ sampleRate: TARGET_SR });
     this.nextTime = 0;
+
+    this.gain = this.ctx.createGain();
+    this.analyser = this.ctx.createAnalyser();
+    this.analyser.fftSize = 512;
+    this.analyser.smoothingTimeConstant = 0.6;
+    this.gain.connect(this.analyser);
+    this.analyser.connect(this.ctx.destination);
+
+    this.freq = new Uint8Array(this.analyser.frequencyBinCount);
+    this.time = new Uint8Array(this.analyser.fftSize);
   }
 
   resume() { return this.ctx.resume(); }
@@ -109,11 +121,42 @@ export class PcmPlayer {
     buf.copyToChannel(f32, 0);
     const node = this.ctx.createBufferSource();
     node.buffer = buf;
-    node.connect(this.ctx.destination);
+    node.connect(this.gain);
 
     const now = this.ctx.currentTime;
     if (this.nextTime < now) this.nextTime = now + 0.02;
     node.start(this.nextTime);
     this.nextTime += buf.duration;
+  }
+
+  // Текущие уровни для сферы. Вызывать каждый кадр во время речи.
+  // Возвращает {rms, low, mid, high} в диапазоне ~0..1.
+  getLevels() {
+    const a = this.analyser;
+    a.getByteFrequencyData(this.freq);
+    a.getByteTimeDomainData(this.time);
+
+    // RMS по временной области
+    let sum = 0;
+    for (let i = 0; i < this.time.length; i++) {
+      const v = (this.time[i] - 128) / 128;
+      sum += v * v;
+    }
+    const rms = Math.min(1, Math.sqrt(sum / this.time.length) * 2.2);
+
+    // частотные полосы (16 kHz → Найквист 8 kHz)
+    const n = this.freq.length;
+    const band = (a0, a1) => {
+      let s = 0, c = 0;
+      const i0 = Math.floor(a0 * n), i1 = Math.floor(a1 * n);
+      for (let i = i0; i < i1; i++) { s += this.freq[i]; c++; }
+      return c ? Math.min(1, s / c / 200) : 0;
+    };
+    return {
+      rms,
+      low: band(0.0, 0.12),
+      mid: band(0.12, 0.4),
+      high: band(0.4, 1.0),
+    };
   }
 }

@@ -5,29 +5,33 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
   <title>Оливия · Стоматология №1</title>
   <link rel="stylesheet" href="/styles.css" />
+  <!-- Three.js вендорится локально (kiosk/vendor) — киоск работает без CDN/сети (ТЗ §24) -->
   <script type="importmap">
-    { "imports": { "three": "https://unpkg.com/three@0.160.0/build/three.module.js" } }
+    {
+      "imports": {
+        "three": "/vendor/three/three.module.js",
+        "three/addons/": "/vendor/three/addons/"
+      }
+    }
   </script>
 </head>
 <body>
-  <!-- Фон ожидания: видео с медузами (положите kiosk/assets/jellyfish.mp4) -->
-  <video id="idle-video" class="layer" autoplay muted loop playsinline></video>
-  <!-- Запасной анимированный фон, если видео нет -->
-  <div id="idle-fallback" class="layer nebula"></div>
-
-  <!-- Активный режим: WebGL-шар -->
+  <!-- Живая сцена «Океан Оливии»: работает и в ожидании, и в активном режиме -->
   <canvas id="scene" class="layer hidden"></canvas>
 
-  <!-- Служебный оверлей (субтитры + статус) -->
+  <!-- Запасной анимированный фон (CSS): пока не нажат старт и при ошибке WebGL -->
+  <div id="idle-fallback" class="layer nebula"></div>
+
+  <!-- Служебный оверлей (субтитры) -->
   <div id="overlay">
     <div id="caption"></div>
-    <div id="status">режим ожидания</div>
+    <div id="status"></div>
   </div>
 
   <!-- Кнопка старта: нужна, чтобы браузер разрешил микрофон/звук -->
   <button id="start-btn">Запустить киоск</button>
 
-  <!-- Панель отладки для теста на MacBook (скрыта в проде) -->
+  <!-- Панель отладки для теста без камеры (скрыта в проде) -->
   <div id="debug">
     <button data-act="enter">👤 Вошёл</button>
     <button data-act="leave">🚪 Ушёл</button>
