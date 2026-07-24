@@ -108,8 +108,14 @@
     if (!active && present >= PRESENCE_FRAMES) {
       active = true;
       badge.textContent = "● человек обнаружен";
-      log("человек обнаружен → trigger");
-      fetch("/api/trigger", { method: "POST" }).catch(() => {});
+      log("человек обнаружен");
+      // в интерактивном режиме — запускаем голосовую сессию Оливии,
+      // иначе (демо-сценарий) — дёргаем серверный триггер
+      if (window.SmileVoice && !window.SmileVoice.state.active) {
+        window.SmileVoice.start();
+      } else if (!window.SmileVoice) {
+        fetch("/api/trigger", { method: "POST" }).catch(() => {});
+      }
     } else if (active && absent >= ABSENCE_FRAMES) {
       active = false;
       badge.textContent = "● камера активна";

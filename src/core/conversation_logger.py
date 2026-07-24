@@ -14,7 +14,7 @@ class ConversationLogger:
 
     def __init__(self, config):
         # Принимаем либо dict из settings.yaml (секция logging.conversations),
-        # либо просто строку-путь (как делает main_offline.py).
+        # либо просто строку-путь.
         if isinstance(config, str):
             self.enabled = True
             path = config

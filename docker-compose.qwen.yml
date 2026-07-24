@@ -1,0 +1,58 @@
+# ════════════════════════════════════════════════════════════════════
+#  Smile.AI — НАДСТРОЙКА «Qwen3-TTS» (CustomVoice, готовые тембры, GPU)
+#
+#  Лучшее качество русского голоса локально. Тембр выбирается из набора
+#  Qwen (QWEN_SPEAKER), образец голоса НЕ нужен. Требуется GPU (NVIDIA) +
+#  nvidia-container-toolkit на хосте. На RTX 3060 12 ГБ модель 1.7B помещается.
+#
+#  Запуск (поверх smart-стенда):
+#    docker compose -f docker-compose.demo.yml \
+#                   -f docker-compose.smart.yml \
+#                   -f docker-compose.qwen.yml up --build
+#    # короче:  make qwen
+#
+#  Сменить тембр (женские: Vivian, Serena, Ono_Anna, Sohee):
+#    QWEN_SPEAKER=Serena make qwen
+#
+#  Первый запуск скачает веса Qwen (~3–4 ГБ) в volume hf_cache.
+#  Клонирование из своего образца — отдельный движок qwen3vc
+#  (TTS_ENGINE=qwen3vc + QWEN_REF_AUDIO/QWEN_REF_TEXT_FILE).
+# ════════════════════════════════════════════════════════════════════
+
+services:
+
+  # Освобождаем GPU под Qwen3-TTS: Ollama уводим на CPU. На i7-13700KF
+  # LLM отвечает за ~1.5–3 с — для киоска приемлемо, зато весь GPU под голос.
+  ollama:
+    environment:
+      CUDA_VISIBLE_DEVICES: ""
+
+  web:
+    build:
+      args:
+        WITH_TTS: "1"
+        TTS_ENGINE: "qwen"
+    environment:
+      TTS_ENGINE: "qwen"
+      QWEN_CV_MODEL: "${QWEN_CV_MODEL:-Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice}"
+      QWEN_SPEAKER: "${QWEN_SPEAKER:-Serena}"
+      QWEN_LANGUAGE: "${QWEN_LANGUAGE:-Russian}"
+      QWEN_DEVICE: "${QWEN_DEVICE:-cuda:0}"
+      QWEN_ATTN: "${QWEN_ATTN:-sdpa}"
+      # Меньше фрагментации VRAM при генерации (рекомендация PyTorch при OOM)
+      PYTORCH_CUDA_ALLOC_CONF: "${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True}"
+      HF_HOME: "/root/.cache/huggingface"
+    volumes:
+      - hf_cache:/root/.cache/huggingface   # кэш весов Qwen (~3–4 ГБ)
+    # GPU для контейнера web (нужен nvidia-container-toolkit на хосте)
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+
+volumes:
+  hf_cache:
+    driver: local

@@ -32,12 +32,23 @@ from pathlib import Path
 from aiohttp import web
 from loguru import logger
 
-from ..dikidi.client_stub import DikidiClientStub
-from ..dikidi.sim_client import SimDikidiClient
+from ..core.config import load_config
 from ..core.conversation_logger import ConversationLogger
+from ..dikidi.client import DikidiClient
+from . import responder
 
 WEB_DIR = Path(__file__).resolve().parent.parent.parent / "web"
 ASSETS_DIR = Path(__file__).resolve().parent.parent.parent / "assets" / "videos"
+
+_YES_WORDS = {"да", "ага", "угу", "верно", "точно", "так", "это я", "я", "конечно",
+              "правильно", "именно", "ну да", "да это я"}
+
+
+def _is_yes(text: str) -> bool:
+    t = text.lower().replace("ё", "е").strip(" .,!?")
+    if t in _YES_WORDS:
+        return True
+    return any(w in t.split() for w in ("да", "верно", "точно", "правильно", "именно"))
 
 
 # ────────────────────────────────────────────────────────────
@@ -80,7 +91,7 @@ class KioskScenario:
     данные об окнах/услугах берутся из симулятора DIKIDI.
     """
 
-    def __init__(self, bus: EventBus, dikidi: DikidiClientStub,
+    def __init__(self, bus: EventBus, dikidi: DikidiClient,
                  conv: ConversationLogger) -> None:
         self.bus = bus
         self.dikidi = dikidi
@@ -203,8 +214,205 @@ async def trigger(request: web.Request) -> web.Response:
     return web.json_response({"ok": True})
 
 
+async def api_greeting(request: web.Request) -> web.Response:
+    """Текст приветствия Оливии. Заодно — старт новой сессии (сброс контекста)."""
+    session = request.app["session"]
+    session["cid"] = None
+    session["offtopic"] = 0
+    session["checkin"] = None
+    llm = request.app.get("llm")
+    if llm is not None and hasattr(llm, "reset_conversation"):
+        llm.reset_conversation()
+
+    source = request.query.get("source", "")
+    if source == "camera":
+        text = ("Здравствуйте! Меня зовут Оливия. Чем могу вам помочь?")
+        if llm is not None:
+            llm.history.append({
+                "user": "[пациент подошёл к стойке — камера обнаружила лицо]",
+                "assistant": text,
+            })
+    else:
+        text = responder.greeting()
+
+    return web.json_response({"text": text})
+
+
+async def api_message(request: web.Request) -> web.Response:
+    """
+    Интерактивный режим: браузер распознал речь пациента (STT) и прислал текст.
+    Возвращаем реплику Оливии — браузер озвучит её (TTS).
+    """
+    try:
+        data = await request.json()
+    except Exception:
+        return web.json_response({"error": "bad json"}, status=400)
+    user_text = (data.get("text") or "").strip()
+    session = request.app["session"]
+    llm = request.app.get("llm")
+    conv: ConversationLogger = request.app["conv"]
+
+    # ── Умный мозг (Ollama): понимает контекст и свободную речь ──
+    if llm is not None:
+        if not user_text:
+            return web.json_response({"reply": "", "ignored": True})
+        logger.info(f"🎤 пациент: {user_text!r}")
+        try:
+            answer = await llm.get_response(user_text)
+        except Exception:
+            logger.exception("LLM error → fallback на правила")
+            answer = responder.reply(user_text)
+        if answer.strip().upper().startswith("ИГНОР"):
+            logger.info(f"🙊 фоновый шум, игнорирую: {user_text!r}")
+            return web.json_response({"reply": "", "ignored": True})
+        logger.info(f"💬 Оливия: {answer!r}")
+        if session.get("cid") is None:
+            session["cid"] = conv.start_conversation()
+        conv.log_message(session["cid"], "user", user_text)
+        conv.log_message(session["cid"], "assistant", answer)
+        return web.json_response({"reply": answer})
+
+    # ── Правиловый запасной мозг: фильтр релевантности + шаблоны ──
+    if not responder.is_relevant(user_text):
+        session["offtopic"] += 1
+        logger.info(f"🙊 нерелевантно ({session['offtopic']}): {user_text!r}")
+        # не навязываемся: фоновую/нерелевантную речь просто игнорируем
+        return web.json_response({"reply": "", "ignored": True})
+
+    session["offtopic"] = 0
+    logger.info(f"🎤 пациент: {user_text!r}")
+
+    # Пришёл по записи → проверяем запись на сегодня в DIKIDI
+    if responder.wants_checkin(user_text):
+        dikidi = request.app["dikidi"]
+        tm = responder.extract_time(user_text)
+        try:
+            appts = await dikidi.get_appointments(time=tm or "")
+        except Exception:
+            logger.exception("DIKIDI недоступен")
+            appts = []
+        if appts:
+            a = appts[0]
+            session["checkin"] = a
+            answer = f"Вы {a['client_name']}?"
+        elif tm:
+            answer = (f"На {tm} записи не вижу. Уточните, пожалуйста, "
+                      "время или назовите ваше имя?")
+        else:
+            answer = "Подскажите, на какое время у вас запись?"
+        logger.info(f"💬 Оливия: {answer!r}")
+        if session.get("cid") is None:
+            session["cid"] = conv.start_conversation()
+        conv.log_message(session["cid"], "user", user_text)
+        conv.log_message(session["cid"], "assistant", answer)
+        return web.json_response({"reply": answer})
+
+    # Подтверждение имени после проверки записи → проводим в зону ожидания
+    if session.get("checkin") and _is_yes(user_text):
+        a = session.pop("checkin")
+        answer = (f"Вижу вашу запись на {a['time']}, врач {a['master_name']}. "
+                  "Присаживайтесь и ожидайте, врач вас пригласит.")
+        logger.info(f"💬 Оливия: {answer!r}")
+        if session.get("cid") is None:
+            session["cid"] = conv.start_conversation()
+        conv.log_message(session["cid"], "user", user_text)
+        conv.log_message(session["cid"], "assistant", answer)
+        return web.json_response({"reply": answer})
+
+    # Запрос времени/записи → реально спрашиваем окна в тестовом DIKIDI
+    if responder.wants_slots(user_text):
+        dikidi = request.app["dikidi"]
+        spec = responder.specialty_for(user_text)
+        try:
+            slots = await dikidi.get_available_slots(spec, limit=3)
+        except Exception:
+            logger.exception("DIKIDI недоступен")
+            slots = []
+        if slots:
+            human = "; ".join(s["human"] for s in slots[:2])
+            answer = (f"Подойдёт, например, {human}. Назовите ваше имя и "
+                      "продиктуйте номер — администратор перезвонит и согласует "
+                      "точное время?")
+        else:
+            answer = ("Сейчас подберём удобное время. Назовите ваше имя и "
+                      "продиктуйте номер — администратор перезвонит и согласует "
+                      "запись?")
+    else:
+        answer = responder.reply(user_text)
+
+    logger.info(f"💬 Оливия: {answer!r}")
+    if session.get("cid") is None:
+        session["cid"] = conv.start_conversation()
+    conv.log_message(session["cid"], "user", user_text)
+    conv.log_message(session["cid"], "assistant", answer)
+    return web.json_response({"reply": answer})
+
+
 async def index(request: web.Request) -> web.Response:
     return web.FileResponse(WEB_DIR / "index.html")
+
+
+async def api_tts(request: web.Request) -> web.Response:
+    """
+    Серверный синтез речи (Piper). GET ?text=... → audio/wav.
+    Голос одинаковый в любом браузере, ничего наружу не уходит.
+    """
+    text = (request.query.get("text") or "").strip()
+    if not text:
+        return web.json_response({"error": "no text"}, status=400)
+    from . import tts
+    audio, err = await asyncio.to_thread(tts.synthesize, text)
+    if err:
+        return web.json_response({"error": err}, status=503)
+    return web.Response(body=audio, content_type="audio/wav",
+                        headers={"Cache-Control": "no-store"})
+
+
+async def api_tts_status(request: web.Request) -> web.Response:
+    """Проверка + диагностика серверного TTS (движок, ошибки загрузки)."""
+    from . import tts
+    available = await asyncio.to_thread(tts.is_available)
+    info = tts.engine_info()
+    return web.json_response({"available": bool(available), **info})
+
+
+async def api_stt_status(request: web.Request) -> web.Response:
+    """Проверка: доступен ли серверный STT (для Firefox)."""
+    from . import stt
+    available = await asyncio.to_thread(stt.is_available)
+    return web.json_response({"available": bool(available)})
+
+
+async def api_camera_status(request: web.Request) -> web.Response:
+    """Статус серверной камеры (Xiaomi C200 / RTSP / USB)."""
+    if os.getenv("CAMERA_SOURCE", "").strip():
+        from ..camera import detector
+        return web.json_response(detector.get_status())
+    return web.json_response({"state": "off", "source": "", "error": ""})
+
+
+async def api_stt(request: web.Request) -> web.Response:
+    """
+    Серверное распознавание речи (для Firefox и др. без Web Speech API).
+    Тело запроса — аудио (audio/webm|ogg|wav) из MediaRecorder браузера.
+    """
+    audio = await request.read()
+    ctype = request.headers.get("Content-Type", "")
+    suffix = ".webm"
+    if "ogg" in ctype:
+        suffix = ".ogg"
+    elif "wav" in ctype:
+        suffix = ".wav"
+    elif "mp4" in ctype or "m4a" in ctype:
+        suffix = ".mp4"
+
+    from . import stt
+    text, err = await asyncio.to_thread(stt.transcribe, audio, suffix)
+    if err:
+        logger.warning(f"STT ошибка: {err}")
+        return web.json_response({"text": "", "error": err}, status=503)
+    logger.info(f"🎤 STT распознал: {text!r}")
+    return web.json_response({"text": text})
 
 
 # ────────────────────────────────────────────────────────────
@@ -212,28 +420,54 @@ def build_app(auto_loop: bool = True) -> web.Application:
     app = web.Application()
     bus = EventBus()
 
-    # Источник данных DIKIDI: HTTP-симулятор (отдельный контейнер) либо
-    # in-process заглушка. Включается переменной окружения DIKIDI_BASE_URL.
-    dikidi_url = os.getenv("DIKIDI_BASE_URL", "").strip()
-    if dikidi_url:
-        dikidi = SimDikidiClient(dikidi_url)
-        logger.info(f"DIKIDI backend: HTTP → {dikidi_url}")
-    else:
-        dikidi = DikidiClientStub(seed=7)
-        logger.info("DIKIDI backend: in-process stub")
+    # Единый DIKIDI-клиент. По умолчанию — тестовый сервер fake_server
+    # (в docker это контейнер dikidi-sim). Для реального DIKIDI поменяйте
+    # DIKIDI_BASE_URL и DIKIDI_TOKEN — код не меняется.
+    dikidi_url = os.getenv("DIKIDI_BASE_URL", "http://127.0.0.1:8089").strip()
+    dikidi_token = os.getenv("DIKIDI_TOKEN", "demo-token")
+    dikidi = DikidiClient(dikidi_url, token=dikidi_token)
 
     conv = ConversationLogger({"enabled": True,
                                "jsonl_path": "data/logs/conversations.jsonl"})
     scenario = KioskScenario(bus, dikidi, conv)
 
+    # ── Умный мозг на Ollama (если доступен) ──
+    # Включается, когда задан OLLAMA_HOST. Использует персону из
+    # config/prompts.yaml, держит контекст диалога, ходит в DIKIDI через tools.
+    # Если Ollama недоступен — тихо откатываемся на правиловый responder.
+    llm = None
+    if os.getenv("OLLAMA_HOST"):
+        try:
+            from ..llm.assistant import LLMAssistant
+            cfg = load_config()
+            llm = LLMAssistant(cfg.llm, dikidi)
+            logger.success(f"🧠 Мозг: Ollama ({llm.model})")
+        except Exception as e:
+            logger.warning(f"🧠 Ollama недоступен ({e}). Мозг: правиловый responder.")
+            llm = None
+    else:
+        logger.info("🧠 Мозг: правиловый responder (OLLAMA_HOST не задан)")
+
     app["bus"] = bus
     app["scenario"] = scenario
+    app["conv"] = conv
+    app["dikidi"] = dikidi
+    app["llm"] = llm
     app["auto_loop"] = auto_loop
+    # состояние сессии киоска (изменяемый dict — без мутации app после старта)
+    app["session"] = {"cid": None, "offtopic": 0, "checkin": None}
 
     app.add_routes([
         web.get("/", index),
         web.get("/api/events", sse_events),
         web.post("/api/trigger", trigger),
+        web.get("/api/greeting", api_greeting),
+        web.post("/api/message", api_message),
+        web.post("/api/stt", api_stt),
+        web.get("/api/stt/status", api_stt_status),
+        web.get("/api/tts", api_tts),
+        web.get("/api/tts/status", api_tts_status),
+        web.get("/api/camera/status", api_camera_status),
     ])
     # статика
     app.router.add_static("/", path=str(WEB_DIR), name="web")
@@ -244,10 +478,61 @@ def build_app(auto_loop: bool = True) -> web.Application:
         if app["auto_loop"]:
             app["loop_task"] = asyncio.create_task(scenario.auto_loop())
 
+        # ── Прогрев TTS в фоне ──
+        # Клонирующие модели (XTTS ~1.8 ГБ) скачиваются/грузятся минуты.
+        # Без прогрева первый запрос голоса упирается в таймаут браузера и
+        # кажется, что «голос не работает». Греем при старте — к первому
+        # пациенту модель уже в памяти. Ошибки загрузки видны сразу в логах.
+        def _warm_tts() -> None:
+            try:
+                from . import tts
+                ok = tts.is_available()
+                info = tts.engine_info()
+                if ok:
+                    logger.success(f"TTS прогрет: engine={info['engine']}, loaded={info['loaded']}")
+                    # реальный синтез: первый ответ пациенту не платит за
+                    # автоподбор cuDNN / первую CUDA-аллокацию; кэширует приветствие
+                    tts.warmup()
+                else:
+                    logger.error(f"TTS недоступен: errors={info['errors']}")
+            except Exception:
+                logger.exception("TTS warmup error")
+
+        app["tts_warmup"] = asyncio.create_task(asyncio.to_thread(_warm_tts))
+
+        # ── Серверная камера (RTSP / USB) ──
+        # Если задан CAMERA_SOURCE — запускаем фоновый детектор.
+        # При обнаружении человека → POST /api/trigger (запуск голосовой сессии).
+        if os.getenv("CAMERA_SOURCE", "").strip():
+            from ..camera import detector
+            loop = asyncio.get_event_loop()
+
+            def _on_person():
+                asyncio.run_coroutine_threadsafe(bus.publish({
+                    "type": "camera", "event": "person_detected"
+                }), loop)
+
+            def _on_left():
+                asyncio.run_coroutine_threadsafe(bus.publish({
+                    "type": "camera", "event": "person_left"
+                }), loop)
+
+            def _on_status(status):
+                asyncio.run_coroutine_threadsafe(bus.publish({
+                    "type": "camera_status", **status
+                }), loop)
+
+            if detector.start(_on_person, _on_left, _on_status):
+                logger.success("Камера: серверная детекция запущена")
+
     async def on_cleanup(app: web.Application) -> None:
         t = app.get("loop_task")
         if t:
             t.cancel()
+        if os.getenv("CAMERA_SOURCE", "").strip():
+            from ..camera import detector
+            detector.stop()
+        await dikidi.close()
 
     app.on_startup.append(on_start)
     app.on_cleanup.append(on_cleanup)
@@ -255,15 +540,18 @@ def build_app(auto_loop: bool = True) -> web.Application:
 
 
 def main(argv: list[str] | None = None) -> int:
-    p = argparse.ArgumentParser(description="Smile.AI веб-киоск + симуляция")
+    p = argparse.ArgumentParser(description="Smile.AI веб-киоск")
     p.add_argument("--host", default="127.0.0.1")
     p.add_argument("--port", type=int, default=8080)
+    p.add_argument("--demo", action="store_true",
+                   help="прокручивать заготовленный диалог (без микрофона) — для показа визуала")
     p.add_argument("--no-loop", action="store_true",
-                   help="не запускать авто-сценарий (триггер вручную через /api/trigger)")
+                   help="(устарело) то же, что без --demo: интерактивный режим")
     args = p.parse_args(argv)
 
-    logger.info(f"🦷 Smile.AI веб-киоск: http://{args.host}:{args.port}")
-    web.run_app(build_app(auto_loop=not args.no_loop),
+    mode = "ДЕМО-сценарий" if args.demo else "интерактивный (микрофон + голос)"
+    logger.info(f"🦷 Smile.AI веб-киоск: http://{args.host}:{args.port} | режим: {mode}")
+    web.run_app(build_app(auto_loop=args.demo),
                 host=args.host, port=args.port, print=None)
     return 0
 

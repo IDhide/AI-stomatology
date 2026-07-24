@@ -1,33 +1,29 @@
 # ════════════════════════════════════════════════════════════════════
-#  Smile.AI — Dockerfile (multi-stage)
+#  Smile.AI — Dockerfile (веб-киоск)
 #
-#  Targets:
-#    deps    — лёгкие зависимости без torch (для CI-проверки структуры)
-#    builder — полная сборка с torch (для production)
-#    runtime — финальный образ
+#  Один образ для всего: веб-киоск (голос + визуал) и тестовый DIKIDI API.
+#  Только pure-python зависимости. STT (faster-whisper) — опционально.
 #
-#  CI:       docker build --target deps -t smile-ai:deps .
-#  CPU prod: docker build --target runtime -t smile-ai:latest .
-#  GPU prod: docker build --build-arg VARIANT=gpu --target runtime -t smile-ai:gpu .
+#  Сборка:        docker build --target web -t smile-ai:web .
+#  С STT:         docker build --target web --build-arg WITH_STT=1 -t smile-ai:web .
+#  Запуск удобнее через docker-compose.demo.yml / docker-compose.smart.yml.
 # ════════════════════════════════════════════════════════════════════
 
 ARG PYTHON_VERSION=3.11
-ARG VARIANT=cpu
 
-# ── Stage 1: base ────────────────────────────────────────────────
+# ── base ─────────────────────────────────────────────────────────
 FROM python:${PYTHON_VERSION}-slim AS base
-
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
-
-# Используем Python из образа, не скачиваем новый
 ENV UV_PYTHON_DOWNLOADS=never
-
 WORKDIR /app
 
-# ── Stage: web (лёгкий веб-демо: киоск + симулятор DIKIDI) ─────────
-# Только pure-python зависимости. Без torch/pygame/opencv/ollama.
-# Используется в docker-compose.demo.yml для быстрого тестового запуска.
+# ── web: киоск + тестовый DIKIDI ─────────────────────────────────
 FROM base AS web
+
+# WITH_STT=1 — серверное распознавание речи (faster-whisper, нужно для Firefox)
+# WITH_TTS=1 — серверный синтез речи (рекомендуется: голос полностью локальный)
+ARG WITH_STT=0
+ARG WITH_TTS=0
 
 RUN uv venv --python python3 .venv
 
@@ -36,7 +32,66 @@ RUN uv pip install --python .venv/bin/python \
     "pyyaml>=6.0.1" \
     "pydantic>=2.5" \
     "python-dotenv>=1.0" \
-    "aiohttp>=3.9"
+    "aiohttp>=3.9" \
+    "requests>=2.31" \
+    "num2words>=0.5.13" \
+    "ormsgpack>=1.5.0"
+
+# Опционально — серверный STT (faster-whisper, модель ~150 МБ–1.5 ГБ в рантайме)
+RUN if [ "$WITH_STT" = "1" ]; then \
+      uv pip install --python .venv/bin/python "faster-whisper>=1.0.0"; \
+    fi
+
+# Опционально — серверный TTS. По умолчанию Silero (живой женский голос,
+# нужен torch CPU ~800 МБ). Для лёгкого запасного движка Piper укажите
+# --build-arg TTS_ENGINE=piper.
+# Для fishaudio тоже ставим Silero+torch — он работает локальным фолбэком,
+# если контейнер Fish Speech ещё прогревается или недоступен.
+ARG TTS_ENGINE=silero
+RUN if [ "$WITH_TTS" = "1" ] && { [ "$TTS_ENGINE" = "silero" ] || [ "$TTS_ENGINE" = "fishaudio" ]; }; then \
+      uv pip install --python .venv/bin/python \
+        --extra-index-url https://download.pytorch.org/whl/cpu \
+        "torch>=2.1" "numpy>=1.24"; \
+    fi
+RUN if [ "$WITH_TTS" = "1" ] && [ "$TTS_ENGINE" = "piper" ]; then \
+      uv pip install --python .venv/bin/python "piper-tts>=1.2.0"; \
+    fi
+# Qwen3-TTS — нужен GPU/CUDA. torch CUDA + qwen-tts. sox для обработки аудио.
+# Движок qwen (CustomVoice, готовые тембры) и qwen3vc (клонирование) — один пакет.
+RUN if [ "$WITH_TTS" = "1" ] && { [ "$TTS_ENGINE" = "qwen" ] || [ "$TTS_ENGINE" = "qwen3vc" ]; }; then \
+      apt-get update -q && apt-get install -y --no-install-recommends sox libsox-fmt-all && \
+      rm -rf /var/lib/apt/lists/* && \
+      uv pip install --python .venv/bin/python \
+        "torch>=2.1" "numpy>=1.24" "soundfile>=0.12" "qwen-tts"; \
+    fi
+# Клонирование голоса (XTTS v2 / Coqui) — лёгкий (467M, ~2 ГБ VRAM), быстрый,
+# работает и на CPU. Лицензия модели CPML (non-commercial).
+# torchaudio обязателен для coqui-tts (без него: No module named 'torchaudio').
+# transformers<5 обязателен: в 5.x убрали isin_mps_friendly, который импортирует
+# coqui-tts (иначе XTTS молча падает и откатывается на Silero).
+# torch<2.9: с 2.9 coqui-tts требует отдельный torchcodec для аудио-IO; на 2.8
+# хватает torchaudio. ffmpeg — чтобы читать образец голоса в mp3.
+RUN if [ "$WITH_TTS" = "1" ] && [ "$TTS_ENGINE" = "xtts" ]; then \
+      apt-get update -q && apt-get install -y --no-install-recommends \
+        sox libsox-fmt-all espeak-ng ffmpeg && \
+      rm -rf /var/lib/apt/lists/* && \
+      uv pip install --python .venv/bin/python \
+        "torch>=2.1,<2.9" "torchaudio>=2.1,<2.9" "numpy>=1.24" "soundfile>=0.12" \
+        "transformers>=4.57,<5" "coqui-tts"; \
+    fi
+
+# RUAccent — точная нейросетевая простановка ударений для Silero (ставим везде,
+# где может работать Silero: silero/fishaudio-фолбэк/silero внутри xtts-образа).
+# Модель ударений скачивается при первом запуске; кэшируется через HF_HOME.
+RUN if [ "$WITH_TTS" = "1" ] && { [ "$TTS_ENGINE" = "silero" ] || [ "$TTS_ENGINE" = "fishaudio" ] || [ "$TTS_ENGINE" = "xtts" ] || [ "$TTS_ENGINE" = "qwen" ] || [ "$TTS_ENGINE" = "qwen3vc" ]; }; then \
+      uv pip install --python .venv/bin/python "ruaccent>=1.5.8"; \
+    fi
+
+# Опционально — детекция лиц камерой (OpenCV, ~50 МБ)
+ARG WITH_CAMERA=0
+RUN if [ "$WITH_CAMERA" = "1" ]; then \
+      uv pip install --python .venv/bin/python "opencv-python-headless>=4.8.0"; \
+    fi
 
 COPY src/ src/
 COPY config/ config/
@@ -49,99 +104,10 @@ ENV PYTHONPATH="/app"
 ENV PYTHONUNBUFFERED=1
 ENV PYTHONDONTWRITEBYTECODE=1
 
-# Smoke-тест импортов веб-стека
-RUN python -c "import src.web.server, src.dikidi.fake_server; print('web stage OK')"
+# Smoke-тест импортов
+RUN python -c "import src.web.server, src.dikidi.fake_server, src.dikidi.client; print('web stage OK')"
 
 EXPOSE 8080 8089
 
 # По умолчанию — веб-киоск (в compose переопределяется command-ой)
 CMD ["python", "-m", "src.web.server", "--host", "0.0.0.0", "--port", "8080"]
-
-# ── Stage 2: deps (CI target) ─────────────────────────────────────
-# Только pure-python пакеты, без torch/ML/build-tools
-FROM base AS deps
-
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    libsndfile1 \
-    && rm -rf /var/lib/apt/lists/*
-
-RUN uv venv --python python3 .venv
-
-# Устанавливаем только необходимые зависимости (все pure-python wheels)
-RUN uv pip install --python .venv/bin/python \
-    "loguru>=0.7.2" \
-    "pyyaml>=6.0.1" \
-    "pydantic>=2.5" \
-    "python-dotenv>=1.0" \
-    "requests>=2.31" \
-    "aiohttp>=3.9" \
-    "num2words>=0.5.13"
-
-# Копируем код — PYTHONPATH=/app позволяет импортировать src без pip install
-COPY src/ src/
-COPY config/ config/
-
-# Smoke-тест: проверяем что импорты работают
-RUN PYTHONPATH=/app .venv/bin/python -c \
-    "from src.core.config import load_config; load_config(); print('deps stage OK')"
-
-# ── Stage 3: builder — полная сборка ─────────────────────────────
-FROM base AS builder
-
-ARG VARIANT
-
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential \
-    libportaudio2 libsndfile1 ffmpeg \
-    libgl1 libglib2.0-0 \
-    && rm -rf /var/lib/apt/lists/*
-
-RUN uv venv --python python3 .venv
-
-COPY pyproject.toml .
-COPY src/ src/
-
-# CPU: torch с обычного PyPI (работает без CUDA)
-# GPU: torch с CUDA 12.1 индекса (для RTX 3060 и аналогов)
-RUN if [ "$VARIANT" = "gpu" ]; then \
-      uv pip install \
-        --python .venv/bin/python \
-        --extra-index-url https://download.pytorch.org/whl/cu121 \
-        -e ".[gpu]"; \
-    else \
-      uv pip install \
-        --python .venv/bin/python \
-        -e ".[cpu]"; \
-    fi
-
-# ── Stage 4: runtime ─────────────────────────────────────────────
-FROM python:${PYTHON_VERSION}-slim AS runtime
-
-LABEL org.opencontainers.image.title="Smile.AI Dental Assistant"
-LABEL org.opencontainers.image.description="Голосовой ассистент стоматологической клиники"
-
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    libportaudio2 libsndfile1 ffmpeg \
-    libgl1 libglib2.0-0 \
-    libsdl2-2.0-0 libsdl2-mixer-2.0-0 \
-    libsdl2-image-2.0-0 libsdl2-ttf-2.0-0 \
-    && rm -rf /var/lib/apt/lists/*
-
-COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
-COPY --from=builder /app/.venv .venv
-COPY src/ src/
-COPY config/ config/
-COPY scripts/Modelfile scripts/Modelfile
-
-RUN mkdir -p data/logs assets/videos
-
-ENV PATH="/app/.venv/bin:$PATH"
-ENV PYTHONPATH="/app"
-ENV PYTHONUNBUFFERED=1
-ENV PYTHONDONTWRITEBYTECODE=1
-ENV SDL_VIDEODRIVER=dummy
-ENV SDL_AUDIODRIVER=dummy
-
-WORKDIR /app
-
-CMD ["python", "-m", "src.main_offline", "--no-camera", "--simulate-voice"]

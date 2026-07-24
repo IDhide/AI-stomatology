@@ -1,223 +1,175 @@
 """
-Клиент для работы с DIKIDI API
+client.py
+=========
+Единый асинхронный клиент DIKIDI API для ассистента.
+
+По умолчанию ходит в ТЕСТОВЫЙ сервер `fake_server.py` (он повторяет реальные
+пути DIKIDI). Когда будет доступ к настоящему DIKIDI — достаточно поменять
+base_url и токен (переменные DIKIDI_BASE_URL / DIKIDI_TOKEN), код менять не
+нужно. Сигнатуры методов совпадают с тем, что вызывает LLM через tools
+(см. src/llm/tools.py) и веб-сценарий.
+
+Эндпоинты (как в fake_server):
+    GET  /v1/company/services
+    GET  /v1/company/masters
+    GET  /v1/booking/available-slots
+    POST /v1/booking/create
+    GET  /v1/clients/search
 """
-from datetime import datetime, timedelta
+from __future__ import annotations
+
+from datetime import datetime
 
 import aiohttp
 from loguru import logger
 
+_DAYS = ["понедельник", "вторник", "среду", "четверг",
+         "пятницу", "субботу", "воскресенье"]
+
+
+def _human(date: str, time: str, doctor: str) -> str:
+    """Человеческое описание окна для озвучивания."""
+    try:
+        d = datetime.strptime(date, "%Y-%m-%d")
+        return f"{_DAYS[d.weekday()]} в {time}, врач {doctor}"
+    except Exception:
+        return f"{date} в {time}, врач {doctor}"
+
 
 class DikidiClient:
-    """Клиент для взаимодействия с DIKIDI API"""
+    """Асинхронный HTTP-клиент DIKIDI (тестовый сервер или реальный API)."""
 
-    def __init__(self, config):
-        self.config = config
-        self.base_url = config.base_url
-        self.api_key = config.api_key
-        self.company_id = config.company_id
-        self.timeout = config.timeout
+    def __init__(self, base_url: str, token: str = "demo-token", timeout: int = 10):
+        self.base_url = base_url.rstrip("/")
+        self.token = token
+        self.timeout = timeout
+        self._session: aiohttp.ClientSession | None = None
+        logger.success(f"DIKIDI клиент → {self.base_url}")
 
-        self.session: aiohttp.ClientSession | None = None
-
-        logger.success("DIKIDI клиент инициализирован")
-
-    async def _get_session(self) -> aiohttp.ClientSession:
-        """Получение или создание HTTP сессии"""
-        if self.session is None or self.session.closed:
-            self.session = aiohttp.ClientSession(
-                headers={
-                    "Authorization": f"Bearer {self.api_key}",
-                    "Content-Type": "application/json"
-                },
-                timeout=aiohttp.ClientTimeout(total=self.timeout)
+    async def _sess(self) -> aiohttp.ClientSession:
+        if self._session is None or self._session.closed:
+            self._session = aiohttp.ClientSession(
+                headers={"Authorization": f"Bearer {self.token}"},
+                timeout=aiohttp.ClientTimeout(total=self.timeout),
             )
-        return self.session
+        return self._session
 
-    async def get_available_slots(
-        self,
-        service_id: int | None = None,
-        master_id: int | None = None,
-        days_ahead: int = 7
-    ) -> list[dict]:
-        """
-        Получить свободные окна для записи
-
-        Args:
-            service_id: ID услуги (опционально)
-            master_id: ID мастера (опционально)
-            days_ahead: Количество дней вперед
-
-        Returns:
-            Список свободных слотов
-        """
-        try:
-            session = await self._get_session()
-
-            # Формируем параметры запроса
-            params = {
-                "company_id": self.company_id,
-                "date_from": datetime.now().strftime("%Y-%m-%d"),
-                "date_to": (datetime.now() + timedelta(days=days_ahead)).strftime("%Y-%m-%d")
-            }
-
-            if service_id:
-                params["service_id"] = service_id
-            if master_id:
-                params["master_id"] = master_id
-
-            async with session.get(
-                f"{self.base_url}/v1/booking/available-slots",
-                params=params
-            ) as response:
-                response.raise_for_status()
-                data = await response.json()
-
-                slots = data.get("data", [])
-                logger.info(f"Получено {len(slots)} свободных слотов")
-                return slots
-
-        except Exception as e:
-            logger.error(f"Ошибка получения слотов: {e}")
-            return []
-
-    async def create_booking(
-        self,
-        client_name: str,
-        client_phone: str,
-        service_id: int,
-        master_id: int,
-        datetime_str: str
-    ) -> dict | None:
-        """
-        Создать запись клиента
-
-        Args:
-            client_name: Имя клиента
-            client_phone: Телефон клиента
-            service_id: ID услуги
-            master_id: ID мастера
-            datetime_str: Дата и время в формате ISO
-
-        Returns:
-            Данные созданной записи или None
-        """
-        try:
-            session = await self._get_session()
-
-            payload = {
-                "company_id": self.company_id,
-                "client": {
-                    "name": client_name,
-                    "phone": client_phone
-                },
-                "services": [{
-                    "service_id": service_id,
-                    "master_id": master_id,
-                    "datetime": datetime_str
-                }]
-            }
-
-            async with session.post(
-                f"{self.base_url}/v1/booking/create",
-                json=payload
-            ) as response:
-                response.raise_for_status()
-                data = await response.json()
-
-                logger.success(f"Запись создана: {data.get('data', {}).get('id')}")
-                return data.get("data")
-
-        except Exception as e:
-            logger.error(f"Ошибка создания записи: {e}")
-            return None
-
-    async def find_client(self, phone: str) -> dict | None:
-        """
-        Найти клиента по номеру телефона
-
-        Args:
-            phone: Номер телефона
-
-        Returns:
-            Данные клиента или None
-        """
-        try:
-            session = await self._get_session()
-
-            async with session.get(
-                f"{self.base_url}/v1/clients/search",
-                params={
-                    "company_id": self.company_id,
-                    "phone": phone
-                }
-            ) as response:
-                response.raise_for_status()
-                data = await response.json()
-
-                clients = data.get("data", [])
-                if clients:
-                    logger.info(f"Клиент найден: {clients[0].get('name')}")
-                    return clients[0]
-                else:
-                    logger.info("Клиент не найден")
-                    return None
-
-        except Exception as e:
-            logger.error(f"Ошибка поиска клиента: {e}")
-            return None
-
-    async def get_services(self) -> list[dict]:
-        """
-        Получить список услуг компании
-
-        Returns:
-            Список услуг
-        """
-        try:
-            session = await self._get_session()
-
-            async with session.get(
-                f"{self.base_url}/v1/company/services",
-                params={"company_id": self.company_id}
-            ) as response:
-                response.raise_for_status()
-                data = await response.json()
-
-                services = data.get("data", [])
-                logger.info(f"Получено {len(services)} услуг")
-                return services
-
-        except Exception as e:
-            logger.error(f"Ошибка получения услуг: {e}")
-            return []
+    # ── услуги / врачи ──────────────────────────────────────
+    async def get_services(self, limit: int = 8) -> list[dict]:
+        s = await self._sess()
+        async with s.get(f"{self.base_url}/v1/company/services") as r:
+            r.raise_for_status()
+            data = (await r.json()).get("data", [])
+        return data[:limit]
 
     async def get_masters(self) -> list[dict]:
-        """
-        Получить список мастеров
+        s = await self._sess()
+        async with s.get(f"{self.base_url}/v1/company/masters") as r:
+            r.raise_for_status()
+            return (await r.json()).get("data", [])
 
-        Returns:
-            Список мастеров
-        """
+    # ── свободные окна ──────────────────────────────────────
+    async def get_available_slots(
+        self,
+        specialty: str = "терапевт",
+        date_from: str | None = None,
+        date_to: str | None = None,
+        priority: int = 2,
+        limit: int = 5,
+        **_,
+    ) -> list[dict]:
+        s = await self._sess()
+        params = {"specialty": specialty, "limit": str(limit)}
+        if date_from:
+            params["date_from"] = date_from
+        if date_to:
+            params["date_to"] = date_to
+        async with s.get(f"{self.base_url}/v1/booking/available-slots",
+                         params=params) as r:
+            r.raise_for_status()
+            data = (await r.json()).get("data", [])
+        for slot in data:
+            slot["human"] = _human(slot.get("date", ""), slot.get("time", ""),
+                                   slot.get("master_name", ""))
+        return data
+
+    # ── записи на приём (проверка на ресепшене) ─────────────
+    async def get_appointments(
+        self, time: str = "", name: str = "", date: str | None = None
+    ) -> list[dict]:
+        """Записи на сегодня, опционально фильтр по времени/имени."""
+        s = await self._sess()
+        params: dict[str, str] = {}
+        if time:
+            params["time"] = time
+        if name:
+            params["name"] = name
+        if date:
+            params["date"] = date
         try:
-            session = await self._get_session()
-
-            async with session.get(
-                f"{self.base_url}/v1/company/masters",
-                params={"company_id": self.company_id}
-            ) as response:
-                response.raise_for_status()
-                data = await response.json()
-
-                masters = data.get("data", [])
-                logger.info(f"Получено {len(masters)} мастеров")
-                return masters
-
-        except Exception as e:
-            logger.error(f"Ошибка получения мастеров: {e}")
+            async with s.get(f"{self.base_url}/v1/booking/appointments",
+                             params=params) as r:
+                r.raise_for_status()
+                return (await r.json()).get("data", [])
+        except Exception:
+            logger.exception("DIKIDI: ошибка получения записей")
             return []
 
-    async def close(self):
-        """Закрытие HTTP сессии"""
-        if self.session and not self.session.closed:
-            await self.session.close()
-            logger.info("DIKIDI сессия закрыта")
+    # ── клиент ──────────────────────────────────────────────
+    async def find_client(self, name: str = "", phone: str = "") -> dict:
+        if not phone:
+            return {"found": False}
+        s = await self._sess()
+        try:
+            async with s.get(f"{self.base_url}/v1/clients/search",
+                             params={"phone": phone}) as r:
+                data = (await r.json()).get("data", [])
+        except Exception:
+            return {"found": False}
+        if data:
+            c = data[0]
+            return {"found": True, "client_id": c.get("id"),
+                    "name": c.get("name"), "phone": c.get("phone")}
+        return {"found": False}
+
+    # ── запись ──────────────────────────────────────────────
+    async def create_booking(
+        self,
+        slot_id: str,
+        procedure_code: str = "consult",
+        client_id: str | None = None,
+        client_name: str = "Гость",
+        client_phone: str = "",
+        note: str = "",
+        **_,
+    ) -> dict:
+        s = await self._sess()
+        payload = {
+            "client": {"name": client_name, "phone": client_phone},
+            "services": [{"slot_id": slot_id, "code": procedure_code, "note": note}],
+        }
+        async with s.post(f"{self.base_url}/v1/booking/create", json=payload) as r:
+            ok = r.status < 400
+            data = (await r.json()).get("data", {})
+        if not ok:
+            return {"ok": False, "error": data.get("message", "error")}
+        return {
+            "ok": True,
+            "booking_id": data.get("id"),
+            "human": _human(data.get("date", ""), data.get("time", ""),
+                            data.get("master_name", "")),
+            "date": data.get("date"),
+            "time": data.get("time"),
+            "doctor": data.get("master_name"),
+        }
+
+    async def cancel_booking(self, booking_id: str) -> dict:
+        # в тестовом сервере отмена не реализована
+        return {"ok": False, "error": "not_supported_in_test_api"}
+
+    async def reschedule_booking(self, booking_id: str, new_slot_id: str) -> dict:
+        return {"ok": False, "error": "not_supported_in_test_api"}
+
+    async def close(self) -> None:
+        if self._session and not self._session.closed:
+            await self._session.close()
