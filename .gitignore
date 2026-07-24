@@ -70,3 +70,4 @@ htmlcov/
 # Node (только для скриншот-тулзы web-UI)
 node_modules/
 package-lock.json
+data/conversations/

@@ -12,8 +12,9 @@ html, body {
   overflow: hidden;
   font-family: -apple-system, "SF Pro Display", "Segoe UI", Roboto, sans-serif;
   color: #eae6ff;
-  cursor: none;
 }
+/* Курсор виден в ожидании (персоналу удобно), прячется только в диалоге */
+body.in-dialog { cursor: none; }
 
 .layer {
   position: fixed; inset: 0;
@@ -22,20 +23,7 @@ html, body {
 }
 .hidden { display: none !important; }
 
-/* Запасной футуристичный фон (если нет видео с медузами) */
-.nebula {
-  background:
-    radial-gradient(60% 60% at 30% 20%, rgba(123,63,242,.25), transparent 70%),
-    radial-gradient(50% 50% at 80% 80%, rgba(64,120,255,.20), transparent 70%),
-    radial-gradient(40% 40% at 60% 40%, rgba(180,80,255,.15), transparent 70%),
-    var(--bg);
-  animation: drift 18s ease-in-out infinite alternate;
-}
-@keyframes drift {
-  from { filter: hue-rotate(0deg) brightness(1); transform: scale(1); }
-  to   { filter: hue-rotate(25deg) brightness(1.15); transform: scale(1.08); }
-}
-
+#idle-canvas { z-index: 1; }
 #scene { z-index: 2; }
 
 #overlay {
@@ -76,6 +64,13 @@ html, body {
   display: flex; gap: 8px; opacity: .25; transition: opacity .2s;
 }
 #debug:hover { opacity: 1; }
+#mock-badge {
+  position: fixed; z-index: 30; right: 16px; top: 16px;
+  padding: 8px 14px; border-radius: 8px;
+  background: rgba(80, 40, 10, .75); border: 1px solid rgba(255,170,60,.5);
+  color: #ffcf8a; font-size: 13px; letter-spacing: .02em;
+}
+
 #debug button {
   padding: 8px 12px; border: 1px solid rgba(160,107,255,.4);
   background: rgba(20,10,40,.7); color: #cbb8ff;

@@ -1,65 +1,142 @@
-// Реактивный фиолетовый шар на Three.js.
-// Вершины икосаэдра смещаются 3D-шумом; сила смещения = амплитуда речи ИИ.
-// Состояния: listening (спокойный пульс) · thinking (медленный вихрь) ·
-// speaking (реакция на амплитуду).
+// Визуализатор «плазменная туманность» — точно по референс-видео:
+// тёмное ядро, вокруг — мягкое светящееся сине-фиолетовое кольцо с розовыми
+// акцентами, всё диффузное, по полю расходятся тонкие концентрические волны.
+// Полноэкранный фрагментный шейдер; голос усиливает волны и яркость.
 import * as THREE from "three";
 
 const VERT = /* glsl */ `
-  uniform float uTime;
-  uniform float uAmp;      // 0..1 амплитуда голоса
-  uniform float uActivity; // базовое «дыхание» по состоянию
-  varying float vDisp;
-  varying vec3 vNormal;
-
-  // --- simplex noise (Ashima) ---
-  vec3 mod289(vec3 x){return x-floor(x*(1.0/289.0))*289.0;}
-  vec4 mod289(vec4 x){return x-floor(x*(1.0/289.0))*289.0;}
-  vec4 permute(vec4 x){return mod289(((x*34.0)+1.0)*x);}
-  vec4 taylorInvSqrt(vec4 r){return 1.79284291400159-0.85373472095314*r;}
-  float snoise(vec3 v){
-    const vec2 C=vec2(1.0/6.0,1.0/3.0); const vec4 D=vec4(0.0,0.5,1.0,2.0);
-    vec3 i=floor(v+dot(v,C.yyy)); vec3 x0=v-i+dot(i,C.xxx);
-    vec3 g=step(x0.yzx,x0.xyz); vec3 l=1.0-g; vec3 i1=min(g.xyz,l.zxy); vec3 i2=max(g.xyz,l.zxy);
-    vec3 x1=x0-i1+C.xxx; vec3 x2=x0-i2+C.yyy; vec3 x3=x0-D.yyy;
-    i=mod289(i);
-    vec4 p=permute(permute(permute(i.z+vec4(0.0,i1.z,i2.z,1.0))+i.y+vec4(0.0,i1.y,i2.y,1.0))+i.x+vec4(0.0,i1.x,i2.x,1.0));
-    float n_=0.142857142857; vec3 ns=n_*D.wyz-D.xzx;
-    vec4 j=p-49.0*floor(p*ns.z*ns.z); vec4 x_=floor(j*ns.z); vec4 y_=floor(j-7.0*x_);
-    vec4 x=x_*ns.x+ns.yyyy; vec4 y=y_*ns.x+ns.yyyy; vec4 h=1.0-abs(x)-abs(y);
-    vec4 b0=vec4(x.xy,y.xy); vec4 b1=vec4(x.zw,y.zw);
-    vec4 s0=floor(b0)*2.0+1.0; vec4 s1=floor(b1)*2.0+1.0; vec4 sh=-step(h,vec4(0.0));
-    vec4 a0=b0.xzyw+s0.xzyw*sh.xxyy; vec4 a1=b1.xzyw+s1.xzyw*sh.zzww;
-    vec3 p0=vec3(a0.xy,h.x); vec3 p1=vec3(a0.zw,h.y); vec3 p2=vec3(a1.xy,h.z); vec3 p3=vec3(a1.zw,h.w);
-    vec4 norm=taylorInvSqrt(vec4(dot(p0,p0),dot(p1,p1),dot(p2,p2),dot(p3,p3)));
-    p0*=norm.x; p1*=norm.y; p2*=norm.z; p3*=norm.w;
-    vec4 m=max(0.6-vec4(dot(x0,x0),dot(x1,x1),dot(x2,x2),dot(x3,x3)),0.0); m=m*m;
-    return 42.0*dot(m*m,vec4(dot(p0,x0),dot(p1,x1),dot(p2,x2),dot(p3,x3)));
-  }
-
-  void main(){
-    vNormal = normal;
-    float t = uTime * 0.35;
-    float n = snoise(normal * 1.8 + t);
-    float amp = 0.10 + uActivity * 0.10 + uAmp * 0.55;
-    float disp = n * amp;
-    vDisp = disp;
-    vec3 pos = position + normal * disp;
-    gl_Position = projectionMatrix * modelViewMatrix * vec4(pos, 1.0);
-  }
+  void main() { gl_Position = vec4(position, 1.0); }
 `;
 
 const FRAG = /* glsl */ `
-  uniform float uAmp;
-  varying float vDisp;
-  varying vec3 vNormal;
+  precision highp float;
+  uniform vec2  uRes;
+  uniform float uTime;
+  uniform float uAmp;      // 0..1 голос (общая громкость)
+  uniform float uActivity; // «дыхание» состояния
+  uniform float uBands[8]; // 8 частотных полос голоса (эквалайзер)
+
+  // ── value noise + fbm ──────────────────────────────────────────
+  float hash(vec2 p){ return fract(sin(dot(p, vec2(127.1,311.7)))*43758.5453123); }
+  float noise(vec2 p){
+    vec2 i=floor(p), f=fract(p); f=f*f*(3.0-2.0*f);
+    return mix(mix(hash(i),hash(i+vec2(1,0)),f.x),
+               mix(hash(i+vec2(0,1)),hash(i+vec2(1,1)),f.x),f.y);
+  }
+  float fbm(vec2 p){
+    float v=0.0, a=0.5;
+    for(int i=0;i<4;i++){ v+=a*noise(p); p*=2.03; a*=0.5; }
+    return v;
+  }
+
   void main(){
-    vec3 core = vec3(0.36, 0.14, 0.85);   // глубокий фиолет
-    vec3 glow = vec3(0.65, 0.42, 1.0);    // светлый край
-    float f = smoothstep(-0.15, 0.35, vDisp);
-    vec3 col = mix(core, glow, f + uAmp * 0.4);
-    float rim = pow(1.0 - abs(vNormal.z), 2.0);
-    col += glow * rim * 0.6;
-    gl_FragColor = vec4(col, 1.0);
+    vec2 uv = (gl_FragCoord.xy - 0.5*uRes) / min(uRes.x, uRes.y);
+    float r = length(uv);
+    // направление вместо угла — нет шва на границе atan
+    vec2 dir = uv / max(r, 1e-4);
+    float t = uTime;
+
+    // ── эквалайзер по секторам: каждой стороне — своя полоса голоса ─
+    // угол 0..1 по кругу → плавная интерполяция между 8 полосами
+    float a01 = atan(uv.y, uv.x) / 6.2831853 + 0.5;
+    float bp = a01 * 8.0;
+    float band = 0.0;
+    for (int i = 0; i < 8; i++) {
+      float fi = float(i);
+      float w = max(0.0, 1.0 - abs(bp - fi));
+      w = max(w, max(0.0, 1.0 - abs(bp - fi - 8.0)));   // замыкание круга
+      w = max(w, max(0.0, 1.0 - abs(bp - fi + 8.0)));
+      band += uBands[i] * w;
+    }
+
+    // ── форма кольца: лёгкая органика + выпуклости от полос голоса ─
+    float wob = (fbm(dir*1.5 + vec2(3.0, t*0.08)) - 0.5) * 0.07
+              + band * 0.05;                            // «кривизна» от голоса
+    float r0 = 0.27 + wob + uAmp*0.015;
+
+    float d = r - r0;
+
+    // ── профиль света: тёмное ядро, компактное кольцо, ореол ──────
+    float ring  = exp(-d*d / 0.008);
+    float halo  = exp(-max(d, 0.0) * 5.5) * 0.45;       // ореол компактнее
+    float core  = smoothstep(0.0, r0*0.92, r);          // затемнение ядра
+    float inner = exp(-max(-d, 0.0) * 7.0) * 0.40;      // свет у кромки ядра
+
+    // ── волны: только вокруг шара, дальше быстро гаснут ───────────
+    float waveZone = exp(-max(d, 0.0) * 6.0);           // радиус распространения
+    float speed = 1.4 + uAmp*4.0;
+    float wPhase = r*150.0 - t*speed*1.8
+                 + fbm(dir*2.0 + vec2(0.0, t*0.10))*4.0;
+    float waves  = pow(0.5 + 0.5*sin(wPhase), 3.0);     // тонкие гребни
+    // амплитуда волн в направлении сектора = его полоса голоса
+    float wAmp = (0.05 + uActivity*0.03 + band*0.55 + uAmp*0.10) * waveZone;
+    float lit = (ring*0.9 + halo + inner) * mix(1.0 - wAmp, 1.0, waves);
+    lit *= mix(0.08, 1.0, core);                        // ядро остаётся тёмным
+
+    // ── 3D-объём: свет сверху-слева, низ кольца в тени ────────────
+    float lightSide = dot(dir, normalize(vec2(-0.35, 0.80)));
+    lit *= 0.72 + 0.38*lightSide;
+
+    // ── цвет: ФИОЛЕТОВАЯ гамма (бренд), розовые акценты ───────────
+    float hueA = fbm(dir*1.2 + vec2(17.0, t*0.06));
+    float hueB = fbm(dir*0.9 + vec2(-7.0, t*0.04));
+    vec3 deepViolet = vec3(0.16, 0.06, 0.45);
+    vec3 violet     = vec3(0.46, 0.20, 0.96);   // #7b3ff2 — бренд
+    vec3 magenta    = vec3(0.72, 0.28, 0.95);
+    vec3 pink       = vec3(0.95, 0.55, 0.95);
+    vec3 blueAccent = vec3(0.28, 0.28, 0.95);
+
+    vec3 col = mix(deepViolet, violet, smoothstep(0.15, 0.60, hueA));
+    col = mix(col, magenta, smoothstep(0.55, 0.85, hueB) * 0.8);
+    col = mix(col, pink,   smoothstep(0.80, 0.97, hueA) * 0.6);
+    col = mix(col, blueAccent, smoothstep(0.20, 0.0, hueA) * 0.25);
+
+    // ── фон: глубокий тёмно-фиолетовый с 3D-градиентом ядра ───────
+    vec3 bg = mix(vec3(0.050, 0.022, 0.120), vec3(0.014, 0.007, 0.040),
+                  smoothstep(0.0, 1.15, r));
+    // ядро не плоское: мягкий объёмный градиент, светлее к верху
+    bg += vec3(0.10, 0.05, 0.24) * exp(-r*3.0)
+        * (0.35 + 0.30*dot(dir, vec2(0.0, 1.0))) * (1.0 - core);
+
+    vec3 final = bg + col * lit * (0.55 + uAmp*0.55);
+
+    // виньетирование — компактная «сфера света» в тёмном поле
+    final *= 1.0 - 0.42*smoothstep(0.55, 1.25, r);
+
+    // ── объёмный 3D-шар в центре (как на референсе) ───────────────
+    float sr = 0.185 + uAmp*0.012 + uActivity*0.004;    // дышит с голосом
+    float sd = r - sr;
+    float sphereMask = smoothstep(0.008, -0.008, sd);
+
+    if (sphereMask > 0.0) {
+      // нормаль точки сферы — честное 3D
+      float nz = sqrt(max(1.0 - (r*r)/(sr*sr), 0.0));
+      vec3 N = vec3(uv/sr, nz);
+      // лёгкая органическая рябь поверхности при речи
+      float bump = (fbm(uv*7.0 + vec2(t*0.25, -t*0.18)) - 0.5) * (0.15 + uAmp*0.6);
+      N = normalize(N + vec3(bump*0.25));
+
+      vec3 L = normalize(vec3(-0.38, 0.70, 0.55));      // свет сверху-слева
+      float lam = clamp(dot(N, L), 0.0, 1.0);
+
+      vec3 sBase = vec3(0.16, 0.06, 0.42);              // тень
+      vec3 sMid  = vec3(0.44, 0.20, 0.94);              // бренд-фиолет
+      vec3 sHi   = vec3(0.80, 0.64, 1.00);              // блик-лаванда
+
+      vec3 sc = mix(sBase, sMid, smoothstep(0.0, 0.85, lam));
+      sc = mix(sc, sHi, pow(lam, 4.0) * 0.85);          // мягкий верхний блик
+      float rimS = pow(1.0 - nz, 2.6);                  // светящаяся кромка
+      sc += vec3(0.52, 0.32, 1.00) * rimS * 0.55;
+      sc *= 1.0 + uAmp*0.45;                            // голос подсвечивает
+      sc *= 0.97 + 0.06*fbm(uv*5.0 + t*0.1);            // живая поверхность
+
+      final = mix(final, sc, sphereMask);
+    }
+    // свечение сразу за кромкой шара — связывает его с туманностью
+    final += violet * exp(-max(sd, 0.0) * 26.0) * (0.20 + uAmp*0.25)
+           * (1.0 - sphereMask);
+
+    gl_FragColor = vec4(final, 1.0);
   }
 `;
 
@@ -70,29 +147,32 @@ export class Visualizer {
     this.ampTarget = 0;
     this.activity = 0.15;
 
-    this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true });
+    this.renderer = new THREE.WebGLRenderer({ canvas, antialias: false });
     this.renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
 
     this.scene = new THREE.Scene();
-    this.camera = new THREE.PerspectiveCamera(45, 1, 0.1, 100);
-    this.camera.position.z = 4.2;
+    this.camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
+
+    this.bands = new Float32Array(8);        // сглаженные значения
+    this.bandTargets = new Float32Array(8);  // свежие с плеера
 
     this.uniforms = {
+      uRes: { value: new THREE.Vector2(1, 1) },
       uTime: { value: 0 },
       uAmp: { value: 0 },
       uActivity: { value: 0.15 },
+      uBands: { value: this.bands },
     };
-    const geo = new THREE.IcosahedronGeometry(1.25, 64);
-    const mat = new THREE.ShaderMaterial({
-      uniforms: this.uniforms, vertexShader: VERT, fragmentShader: FRAG,
-    });
-    this.mesh = new THREE.Mesh(geo, mat);
-    this.scene.add(this.mesh);
 
-    // мягкое свечение вокруг
-    const halo = new THREE.PointLight(0x7b3ff2, 2, 10);
-    halo.position.set(0, 0, 3);
-    this.scene.add(halo);
+    const quad = new THREE.Mesh(
+      new THREE.PlaneGeometry(2, 2),
+      new THREE.ShaderMaterial({
+        uniforms: this.uniforms,
+        vertexShader: VERT,
+        fragmentShader: FRAG,
+      }),
+    );
+    this.scene.add(quad);
 
     this.resize();
     addEventListener("resize", () => this.resize());
@@ -103,32 +183,42 @@ export class Visualizer {
   resize() {
     const w = innerWidth, h = innerHeight;
     this.renderer.setSize(w, h, false);
-    this.camera.aspect = w / h;
-    this.camera.updateProjectionMatrix();
+    const pr = this.renderer.getPixelRatio();
+    this.uniforms.uRes.value.set(w * pr, h * pr);
   }
 
-  // 0..1 — амплитуда текущего аудио-чанка от TTS
-  setAmplitude(a) { this.ampTarget = Math.min(1, a); }
+  // 0..1 — амплитуда текущего аудио-чанка TTS
+  setAmplitude(a) { this.ampTarget = Math.min(1, a * 1.4); }
+
+  // 8 частотных полос голоса (эквалайзер) от PcmPlayer
+  setBands(bands) {
+    for (let i = 0; i < 8; i++) this.bandTargets[i] = Math.min(1, bands[i]);
+  }
 
   setState(state) {
-    // базовое «дыхание» и скорость вращения зависят от состояния
-    this.activity = { idle: 0.05, listening: 0.25, thinking: 0.5, speaking: 0.35 }[state] ?? 0.15;
+    this.activity = { idle: 0.1, listening: 0.35, thinking: 0.7, speaking: 0.5 }[state] ?? 0.15;
   }
 
   _loop() {
     requestAnimationFrame(() => this._loop());
     const dt = this.clock.getDelta();
-    // сглаживаем амплитуду (атака быстрая, спад плавный)
-    const k = this.ampTarget > this.amp ? 0.5 : 0.08;
+
+    // быстрая атака, плавный спад — волны «дышат» вместе с речью
+    const k = this.ampTarget > this.amp ? 0.5 : 0.05;
     this.amp += (this.ampTarget - this.amp) * k;
-    this.ampTarget *= 0.9;
+    this.ampTarget *= 0.92;
 
-    this.uniforms.uTime.value += dt * (1 + this.activity);
+    // полосы эквалайзера: атака быстрая, спад плавный, затем затухание
+    for (let i = 0; i < 8; i++) {
+      const kb = this.bandTargets[i] > this.bands[i] ? 0.45 : 0.07;
+      this.bands[i] += (this.bandTargets[i] - this.bands[i]) * kb;
+      this.bandTargets[i] *= 0.90;
+    }
+
+    this.uniforms.uTime.value += dt * (0.8 + this.activity * 0.6 + this.amp * 0.8);
     this.uniforms.uAmp.value = this.amp;
-    this.uniforms.uActivity.value += (this.activity - this.uniforms.uActivity.value) * 0.05;
+    this.uniforms.uActivity.value += (this.activity - this.uniforms.uActivity.value) * 0.04;
 
-    this.mesh.rotation.y += dt * (0.15 + this.activity * 0.4);
-    this.mesh.rotation.x += dt * 0.05;
     this.renderer.render(this.scene, this.camera);
   }
 }

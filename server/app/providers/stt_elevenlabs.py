@@ -37,8 +37,16 @@ class ElevenLabsSTT(STTProvider):
         self.language = language
         self._client = httpx.AsyncClient(timeout=httpx.Timeout(30.0, connect=10.0))
 
+    # Минимальная длительность реплики: короче — не тратим запрос,
+    # ElevenLabs всё равно ответит 400 audio_too_short.
+    MIN_SECONDS = 0.5
+
     async def transcribe(self, audio: bytes, sample_rate: int = 16000) -> str:
         if not audio:
+            return ""
+        duration = len(audio) / 2 / sample_rate  # PCM16 → 2 байта на сэмпл
+        if duration < self.MIN_SECONDS:
+            logger.debug(f"STT: реплика {duration:.2f}с слишком короткая — пропускаю")
             return ""
 
         wav_bytes = _pcm16_to_wav(audio, sample_rate)
@@ -53,8 +61,9 @@ class ElevenLabsSTT(STTProvider):
             headers=headers,
         )
         if resp.status_code != 200:
+            # Не валим пайплайн: слишком короткое/тихое аудио — просто тишина
             logger.error(f"ElevenLabs STT {resp.status_code}: {resp.text[:300]}")
-            resp.raise_for_status()
+            return ""
 
         return (resp.json().get("text") or "").strip()
 
