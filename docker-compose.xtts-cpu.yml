@@ -1,0 +1,29 @@
+# ════════════════════════════════════════════════════════════════════
+#  Smile.AI — XTTS v2 на CPU (без GPU)
+#
+#  Тот же клонирующий движок, но синтез на CPU. На Ryzen 5 ~1× realtime —
+#  пациент почти не ждёт. Удобно, если GPU занят (например, Ollama).
+#
+#  Запуск:  make xtts-cpu  (или make full-xtts-cpu со всем стендом)
+# ════════════════════════════════════════════════════════════════════
+
+services:
+
+  web:
+    build:
+      args:
+        WITH_TTS: "1"
+        TTS_ENGINE: "xtts"
+    environment:
+      TTS_ENGINE: "xtts"
+      XTTS_REF_AUDIO: "${XTTS_REF_AUDIO:-/app/assets/voice/reference.wav}"
+      XTTS_LANGUAGE: "${XTTS_LANGUAGE:-ru}"
+      XTTS_DEVICE: "cpu"
+      COQUI_TOS_AGREED: "1"
+      TTS_HOME: "/app/models/xtts"
+    volumes:
+      - xtts_cache:/app/models/xtts
+
+volumes:
+  xtts_cache:
+    driver: local

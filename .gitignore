@@ -53,6 +53,15 @@ Thumbs.db
 assets/videos/*.mp4
 assets/videos/*.avi
 
+# Образцы голоса: само АУДИО (биометрия) не коммитим, расшифровку — можно.
+assets/voice/*.wav
+assets/voice/*.mp3
+assets/voice/*.flac
+assets/voice/*.ogg
+
+# go2rtc: рабочий конфиг хранит токен Mi Cloud (секрет). Коммитим только шаблон.
+config/go2rtc.yaml
+
 # pytest
 .pytest_cache/
 .coverage

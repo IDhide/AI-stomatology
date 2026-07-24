@@ -1,0 +1,142 @@
+# ════════════════════════════════════════════════════════════════════
+#  Smile.AI — НАДСТРОЙКА «умный мозг» (Ollama LLM) + локальный TTS (Piper)
+#
+#  Добавляет к демо-стенду:
+#    • языковую модель Ollama (по умолчанию qwen2.5:1.5b — быстрая на CPU,
+#      хороший русский, ответ ~1.5–3 с на короткую реплику);
+#    • серверный TTS (Piper) — голос Оливии полностью локальный, одинаковый
+#      во всех браузерах, не уходит в Google.
+#
+#  Запуск:
+#    docker compose -f docker-compose.demo.yml -f docker-compose.smart.yml up --build
+#    #  короче:  make smart
+#    #  с STT (Firefox):    WITH_STT=1 make smart
+#    #  модель помощнее:    OLLAMA_MODEL=qwen2.5:3b make smart
+#    #  совсем шустрая:     OLLAMA_MODEL=llama3.2:1b make smart
+# ════════════════════════════════════════════════════════════════════
+
+services:
+
+  # ── Ollama (языковая модель) ─────────────────────────────────────
+  ollama:
+    image: ollama/ollama:latest
+    container_name: smile-ollama
+    environment:
+      # держим модель в памяти, чтобы не выгружалась между репликами
+      OLLAMA_KEEP_ALIVE: "30m"
+      # одна параллельная сессия (киоск всё равно один) — больше памяти на контекст
+      OLLAMA_NUM_PARALLEL: "1"
+      # ускорение (на GPU тоже даёт прирост)
+      OLLAMA_FLASH_ATTENTION: "1"
+      # сколько слоёв модели грузить на GPU. 999 = вся модель целиком на видеокарте
+      # (qwen2.5:3b q4 ≈ 2.5 ГБ — спокойно помещается рядом с TTS на 3060 12 ГБ).
+      # Если GPU нет — Ollama сам откатится на CPU, ничего не сломается.
+      OLLAMA_NUM_GPU: "${OLLAMA_NUM_GPU:-999}"
+    volumes:
+      - ollama_data:/root/.ollama
+    ports:
+      - "11434:11434"
+    # GPU для Ollama (нужен nvidia-container-toolkit на хосте). Делит ту же
+    # видеокарту с TTS — на 3060 12 ГБ LLM 3b + Qwen3-TTS 1.7B помещаются вместе.
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+    restart: unless-stopped
+
+  # ── Разовая загрузка модели ──────────────────────────────────────
+  ollama-pull:
+    image: ollama/ollama:latest
+    container_name: smile-ollama-pull
+    environment:
+      OLLAMA_HOST: "http://ollama:11434"
+    # реестр Ollama иногда отдаёт "file does not exist" на манифесте —
+    # transient сбой; ретраим до 5 раз с экспоненциальным backoff.
+    entrypoint:
+      - sh
+      - -c
+      - |
+        until ollama list >/dev/null 2>&1; do echo "ждём ollama…"; sleep 2; done
+        MODEL="${OLLAMA_MODEL:-qwen2.5:3b}"
+        if ollama list 2>/dev/null | awk 'NR>1 {print $$1}' | grep -qx "$$MODEL"; then
+          echo "Модель $$MODEL уже в кэше, пропускаем pull"
+          exit 0
+        fi
+        delay=2
+        for attempt in 1 2 3 4 5; do
+          echo "pull $$MODEL — попытка $$attempt…"
+          if ollama pull "$$MODEL"; then
+            echo "Модель $$MODEL загружена"
+            exit 0
+          fi
+          echo "Сбой реестра, повтор через $${delay}s…"
+          sleep $$delay
+          delay=$$((delay * 2))
+        done
+        echo "Не удалось скачать $$MODEL за 5 попыток"
+        exit 1
+    depends_on:
+      ollama:
+        condition: service_healthy
+    restart: "no"
+
+  # ── Веб-киоск: подключаем мозг + серверный TTS ──────────────────
+  web:
+    build:
+      args:
+        # включаем серверный TTS по умолчанию в smart-стенде
+        WITH_TTS: "${WITH_TTS:-1}"
+        WITH_STT: "${WITH_STT:-1}"
+        # движок голоса: silero (живой женский) | piper (лёгкий)
+        TTS_ENGINE: "${TTS_ENGINE:-silero}"
+    environment:
+      DIKIDI_BASE_URL: "http://dikidi-sim:8089"
+      OLLAMA_HOST: "http://ollama:11434"
+      OLLAMA_MODEL: "${OLLAMA_MODEL:-qwen2.5:3b}"
+      STT_MODEL: "${STT_MODEL:-small}"
+      # ── Голос Оливии (Silero — живой женский) ──
+      TTS_ENGINE: "${TTS_ENGINE:-silero}"
+      # baya — тёплый/интимный (ASMR-подача). Альтернативы:
+      # xenia (чистый/нейтральный), kseniya (мягкий).
+      SILERO_SPEAKER: "${SILERO_SPEAKER:-baya}"
+      SILERO_SAMPLE_RATE: "${SILERO_SAMPLE_RATE:-48000}"
+      # Темп речи для ASMR-подачи (через SSML). Пусто = обычный.
+      # Мягче/медленнее: slow | x-slow | 90%
+      SILERO_RATE: "${SILERO_RATE:-}"
+      SILERO_MODEL_DIR: "/app/models/silero"
+      PIPER_VOICE_DIR: "/app/models/piper"
+      # Кэш модели ударений RUAccent (в томе silero, чтобы не качать каждый раз)
+      HF_HOME: "${HF_HOME:-/app/models/silero/hf}"
+      # Простановка ударений RUAccent: 0 — выключить (откат на акцентор Silero)
+      RUACCENT_ENABLED: "${RUACCENT_ENABLED:-1}"
+      RUACCENT_MODEL: "${RUACCENT_MODEL:-turbo3.1}"
+      RUACCENT_TINY: "${RUACCENT_TINY:-0}"
+      PYTHONUNBUFFERED: "1"
+    volumes:
+      - ./data:/app/data
+      - ./assets:/app/assets
+      - ./config:/app/config   # промпты/персона — правки без пересборки (нужен restart)
+      - silero_voices:/app/models/silero   # кэш модели Silero
+      - piper_voices:/app/models/piper     # кэш голосовых моделей Piper
+    depends_on:
+      dikidi-sim:
+        condition: service_healthy
+      ollama-pull:
+        condition: service_completed_successfully
+
+volumes:
+  ollama_data:
+    driver: local
+  silero_voices:
+    driver: local
+  piper_voices:
+    driver: local

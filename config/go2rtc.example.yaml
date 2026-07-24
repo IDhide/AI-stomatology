@@ -1,0 +1,27 @@
+# ════════════════════════════════════════════════════════════════════
+#  go2rtc — ШАБЛОН конфига. Скопируйте в рабочий файл (он в .gitignore):
+#      cp config/go2rtc.example.yaml config/go2rtc.yaml
+#
+#  Xiaomi Smart Camera C200 настраивается НЕ вручную, а через веб-интерфейс
+#  go2rtc (он сам логинится в Mi Cloud и получает токен + did):
+#
+#    1. Запустите стенд:        make full   (или make smart-camera)
+#    2. Откройте в браузере:    http://localhost:1984
+#    3. Add  →  Xiaomi  →  войдите по email/паролю аккаунта Mi Home
+#       (введите код из письма/SMS или капчу, если попросит)
+#    4. go2rtc найдёт камеру и САМ впишет токен и did в config/go2rtc.yaml
+#    5. Назовите поток ровно:   xiaomi_c200
+#       (киоск ждёт rtsp://go2rtc:8554/xiaomi_c200)
+#
+#  После логина файл будет выглядеть примерно так:
+#
+#    xiaomi:
+#      1234567890: V1:***          # uid аккаунта : токен (go2rtc впишет сам)
+#
+#    streams:
+#      xiaomi_c200: xiaomi://1234567890:cn@192.168.0.10?did=9876543210&model=chuangmi.camera.046c04
+#
+#  Документация: https://github.com/AlexxIT/go2rtc/blob/master/internal/xiaomi/README.md
+# ════════════════════════════════════════════════════════════════════
+
+streams: {}

@@ -21,8 +21,10 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import pathlib
 import random
+import re
 from dataclasses import dataclass
 from typing import Any
 
@@ -34,7 +36,57 @@ from ..dental.faq import lookup_faq
 from ..dental.humor import maybe_joke
 from ..dental.intents import Intent, classify_intent
 from ..dental.triage import Urgency, triage
-from .tools import ToolDispatcher, extract_tool_calls, render_tools_for_prompt
+from .tools import ToolDispatcher, extract_tool_calls
+
+# ── Женский род (страховка) ──────────────────────────────────────────
+# Оливия — женщина, но маленькая модель иногда сбивается на мужской род
+# («я понял», «рад», «готов», «записал»). Промпт это требует, а здесь —
+# гарантированная подчистка финального текста перед озвучкой.
+_FEM_WORDS = {
+    "рад": "рада", "готов": "готова", "должен": "должна", "уверен": "уверена",
+    "согласен": "согласна", "понял": "поняла", "записал": "записала",
+    "уточнил": "уточнила", "проверил": "проверила", "нашёл": "нашла",
+    "нашел": "нашла", "услышал": "услышала", "увидел": "увидела",
+    "рассказал": "рассказала", "предложил": "предложила", "помог": "помогла",
+    "сделал": "сделала", "хотел": "хотела", "смог": "смогла",
+}
+_FEM_RE = re.compile(r"\b(" + "|".join(map(re.escape, _FEM_WORDS)) + r")\b", re.I)
+# любой глагол прош. вр. сразу после «я»: «я <…>л» → «я <…>ла»
+_FEM_YA_RE = re.compile(r"\b(я\s+)([а-яё]+?)л\b", re.I)
+
+
+def _match_case(src: str, repl: str) -> str:
+    return repl.capitalize() if src[:1].isupper() else repl
+
+
+def feminize(text: str) -> str:
+    """Привести самоописание Оливии к женскому роду (не трогая 3-е лицо по
+    возможности): «я понял» → «я поняла», «рад» → «рада»."""
+    if not text:
+        return text
+    text = _FEM_YA_RE.sub(lambda m: m.group(1) + m.group(2) + "ла", text)
+    text = _FEM_RE.sub(lambda m: _match_case(m.group(0), _FEM_WORDS[m.group(0).lower()]), text)
+    return text
+
+
+# ── Защита от «утечки» инструкций в ответ ────────────────────────────
+# Маленькая модель иногда дословно копирует куски системного промпта или
+# служебную подсказку в скобках. Вычищаем их из финального текста.
+_BRACKET_RE = re.compile(r"[\[(][^\])]*(служебн|urgency|specialty|priority|подсказк)[^\])]*[\])]", re.I)
+_LEAK_RE = re.compile(
+    r"\s*(—\s*)?\b(мягко об этом напомни(те)?|своими словами|без выдумок|"
+    r"без markdown|без сокращений|называй только отсюда|не лей воду)\b\.?",
+    re.I,
+)
+
+
+def sanitize(text: str) -> str:
+    """Убрать из ответа утёкшие инструкции и служебные пометки."""
+    if not text:
+        return text
+    text = _BRACKET_RE.sub("", text)
+    text = _LEAK_RE.sub("", text)
+    return re.sub(r"\s{2,}", " ", text).strip()
 
 
 @dataclass
@@ -88,9 +140,14 @@ class LLMAssistant:
             return {}
 
     def _build_system_prompt(self) -> str:
-        base = self.prompts.get("system", "Ты — администратор стоматологической клиники, говоришь по-русски.")
-        tools_block = render_tools_for_prompt()
-        return base.strip() + "\n\n" + tools_block
+        # Только персона. Блок инструментов больше НЕ добавляем: Оливия сама не
+        # записывает (направляет к администратору), а огромный список tool-схем
+        # раздувал промпт за пределы контекста — он обрезался, и Оливия теряла
+        # роль (markdown, бессвязные ответы). Короткий промпт = роль на месте + быстро.
+        return self.prompts.get(
+            "system",
+            "Ты — Оливия, администратор стоматологической клиники, говоришь по-русски.",
+        ).strip()
 
     # ------------------------------------------------------------------
     def _check_connection(self) -> None:
@@ -145,6 +202,9 @@ class LLMAssistant:
                 "fallback_long",
                 "Прошу прощения, мне нужна минутка. Я уточню и вернусь к вам.",
             )
+
+        if text.strip().upper().startswith("ИГНОР"):
+            return "ИГНОР"
 
         self._push(user_text, text)
         return self._with_optional_joke(text, intent, tri)
@@ -212,8 +272,9 @@ class LLMAssistant:
     # ------------------------------------------------------------------
     def _build_messages(self, user_text: str) -> list[dict]:
         msgs: list[dict] = [{"role": "system", "content": self.system_prompt}]
-        # последние 6 пар — больше не надо для голосового сценария
-        for pair in self.history[-6:]:
+        # последние 4 пары — для голосового сценария большего не надо
+        # (меньше контекста → быстрее ответ на CPU)
+        for pair in self.history[-4:]:
             msgs.append({"role": "user", "content": pair["user"]})
             msgs.append({"role": "assistant", "content": pair["assistant"]})
         msgs.append({"role": "user", "content": user_text})
@@ -226,6 +287,9 @@ class LLMAssistant:
                 "model": self.model,
                 "messages": messages,
                 "stream": False,
+                # держим модель в памяти между репликами — иначе на CPU
+                # каждый ответ платит за повторную загрузку весов
+                "keep_alive": os.getenv("OLLAMA_KEEP_ALIVE", "30m"),
                 "options": {
                     "temperature": self.temperature,
                     "num_ctx": self.num_ctx,
@@ -240,6 +304,7 @@ class LLMAssistant:
 
     # ------------------------------------------------------------------
     def _with_optional_joke(self, text: str, intent: Intent, tri) -> str:
+        text = sanitize(feminize(text))  # женский род + без утёкших инструкций
         if not self.enable_humor:
             return text
         joke = maybe_joke(

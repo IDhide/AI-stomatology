@@ -51,10 +51,13 @@
   }
 
   // ============================================================
-  //  Аудио-волна в круге
+  //  Аура: мягкие волны СНАРУЖИ круга (как на референсе)
   // ============================================================
   const wave = document.getElementById("wave");
   const wctx = wave.getContext("2d");
+  const aura = document.getElementById("aura");
+  const actx = aura.getContext("2d");
+  const avatarEl = document.getElementById("avatar");
 
   function sizeWave() {
     const dpr = window.devicePixelRatio || 1;
@@ -64,52 +67,118 @@
     wctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   }
 
+  function sizeAura() {
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    aura.width = window.innerWidth * dpr;
+    aura.height = window.innerHeight * dpr;
+    actx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  }
+
+  // Концентрические волны, расходящиеся ОТ КРАЯ шара наружу. Мягкие размытые
+  // полосы (как на фото-референсе). Ярче/быстрее, когда Оливия говорит.
+  function drawAura(t) {
+    const W = window.innerWidth, H = window.innerHeight;
+    actx.clearRect(0, 0, W, H);
+    if (state.mode === "idle") return;
+
+    const ar = avatarEl.getBoundingClientRect();
+    const cx = ar.left + ar.width / 2;
+    const cy = ar.top + ar.height / 2;
+    const orbR = ar.width / 2;
+    if (orbR < 4) return;
+
+    let energy, speed;
+    if (state.mode === "speaking") {
+      energy = 0.34 + state.ampSmooth * 0.5;
+      speed = 0.9 + state.ampSmooth * 0.5;
+    } else if (state.mode === "listening") {
+      energy = 0.22; speed = 0.55;
+    } else if (state.mode === "thinking") {
+      energy = 0.16; speed = 0.40;
+    } else {
+      energy = 0.20; speed = 0.46;            // greeting
+    }
+
+    const span = Math.min(W, H) * 0.46;       // насколько далеко уходят волны
+    const bandHalf = span * 0.42;             // шире полоса = мягче, размытее
+    const RINGS = 4;
+    const cycle = 5600 / speed;
+
+    actx.save();
+    actx.globalCompositeOperation = "lighter";
+    for (let i = 0; i < RINGS; i++) {
+      const phase = ((t / cycle) + i / RINGS) % 1;
+      const rad = orbR + phase * span;        // от края шара — наружу
+      const fade = Math.sin(Math.PI * phase); // ярче в середине пути, гаснет к краю
+      const a = Math.min(0.30, fade * energy * 0.30);
+      if (a <= 0.008) continue;
+      const inner = Math.max(orbR * 0.7, rad - bandHalf);
+      const outer = rad + bandHalf;
+      const g = actx.createRadialGradient(cx, cy, inner, cx, cy, outer);
+      g.addColorStop(0, "rgba(150, 110, 255, 0)");
+      g.addColorStop(0.5, `rgba(172, 122, 255, ${a})`);
+      g.addColorStop(1, "rgba(150, 110, 255, 0)");
+      actx.fillStyle = g;
+      actx.beginPath();
+      actx.arc(cx, cy, outer, 0, Math.PI * 2);
+      actx.fill();
+    }
+    actx.restore();
+  }
+
+  // Мягкие концентрические волны, расходящиеся из центра (как у голосового
+  // ассистента на референсе): размытые светящиеся полосы, без резких колец.
+  // Когда Оливия говорит — ярче и быстрее по амплитуде речи; иначе спокойнее.
   function drawWave(t) {
     const r = wave.getBoundingClientRect();
     const W = r.width, H = r.height;
     wctx.clearRect(0, 0, W, H);
 
-    const cy = H / 2;
-    // амплитуда зависит от режима
-    let amp;
+    const cx = W / 2, cy = H / 2;
+    const maxR = Math.min(W, H) * 0.5;   // до края круга
+
+    // энергия и скорость волн зависят от режима
+    let energy, speed;
     if (state.mode === "speaking") {
-      amp = 0.10 + state.ampSmooth * 0.40;
+      energy = 0.55 + state.ampSmooth * 0.7;  // ярче на громких местах речи
+      speed = 1.0 + state.ampSmooth * 0.7;
     } else if (state.mode === "listening") {
-      amp = 0.05 + 0.03 * Math.sin(t / 600);
+      energy = 0.40; speed = 0.60;
     } else if (state.mode === "thinking") {
-      amp = 0.03;
+      energy = 0.28; speed = 0.42;
     } else {
-      amp = 0.06 + 0.02 * Math.sin(t / 700);
+      energy = 0.32; speed = 0.50;            // idle/greeting — лёгкое дыхание
     }
-    const A = H * amp;
 
-    // несколько наложенных синусоид → «живая» дорожка
-    const draw = (alpha, lw, phase, freq, scale) => {
+    const RINGS = 6;
+    const cycle = 5200 / speed;               // «жизнь» одной волны, мс
+    const bandHalf = maxR * 0.30;             // ширина мягкой полосы (размытость)
+
+    wctx.save();
+    wctx.globalCompositeOperation = "lighter"; // волны светятся, складываясь
+
+    for (let i = 0; i < RINGS; i++) {
+      // фаза 0..1: волна рождается в центре и мягко уходит к краю
+      const phase = ((t / cycle) + i / RINGS) % 1;
+      const rad = phase * maxR * 0.92;
+      const fade = Math.sin(Math.PI * phase);  // ярче посередине пути
+      const a = Math.min(0.85, fade * energy * 0.5);
+      if (a <= 0.01) continue;
+
+      // мягкая размытая полоса: прозрачно → цвет → прозрачно
+      const inner = Math.max(0, rad - bandHalf);
+      const outer = rad + bandHalf;
+      const g = wctx.createRadialGradient(cx, cy, inner, cx, cy, outer);
+      g.addColorStop(0, "rgba(150, 110, 255, 0)");
+      g.addColorStop(0.5, `rgba(200, 170, 255, ${a})`);
+      g.addColorStop(1, "rgba(150, 110, 255, 0)");
+      wctx.fillStyle = g;
       wctx.beginPath();
-      for (let x = 0; x <= W; x += 2) {
-        const p = x / W;
-        // огибающая: тоньше к краям круга
-        const env = Math.sin(Math.PI * p);
-        const y =
-          cy +
-          env * A * scale *
-            (Math.sin(p * freq * Math.PI * 2 + t / 200 + phase) * 0.7 +
-             Math.sin(p * freq * 1.7 * Math.PI * 2 - t / 320 + phase) * 0.3);
-        x === 0 ? wctx.moveTo(x, y) : wctx.lineTo(x, y);
-      }
-      wctx.strokeStyle = `rgba(255,255,255,${alpha})`;
-      wctx.lineWidth = lw;
-      wctx.lineJoin = "round";
-      wctx.lineCap = "round";
-      wctx.shadowColor = "rgba(255,255,255,0.55)";
-      wctx.shadowBlur = 12;
-      wctx.stroke();
-      wctx.shadowBlur = 0;
-    };
+      wctx.arc(cx, cy, outer, 0, Math.PI * 2);
+      wctx.fill();
+    }
 
-    draw(0.95, 2.2, 0, 3, 1.0);
-    draw(0.35, 1.4, 1.1, 5, 0.6);
-    draw(0.18, 1.0, 2.3, 8, 0.4);
+    wctx.restore();
   }
 
   // ============================================================
@@ -142,85 +211,389 @@
     }
   }
 
-  // несколько «медуз» — мягкие светящиеся купола, медленно всплывают
-  const jellies = [];
-  function initJellies() {
-    const w = window.innerWidth, h = window.innerHeight;
-    jellies.length = 0;
-    const palette = ["#8a5cff", "#4bd6ff", "#ff8fc7", "#ffd27a"];
-    for (let i = 0; i < 5; i++) {
-      jellies.push({
-        x: Math.random() * w,
-        y: Math.random() * h,
-        r: 40 + Math.random() * 70,
-        s: 6 + Math.random() * 14,
-        c: palette[i % palette.length],
-        ph: Math.random() * Math.PI * 2,
-      });
-    }
+  // ═══════════════════════════════════════════════════════
+  //  Медузы — биолюминесцентные, с физикой щупалец
+  // ═══════════════════════════════════════════════════════
+  function hexRGB(h){const n=parseInt(h.slice(1),16);return[(n>>16)&255,(n>>8)&255,n&255]}
+  function rgba(r,g,b,a){return`rgba(${r|0},${g|0},${b|0},${a})`}
+  function lit(r,g,b,k){return[Math.min(255,r+k),Math.min(255,g+k),Math.min(255,b+k)]}
+  function mix(a,b,t){return a+(b-a)*t}
+
+  const PALETTE=[
+    {base:"#8855ff",glow:"#c4a0ff",core:"#e8d0ff"},
+    {base:"#22ccee",glow:"#80eeff",core:"#d0faff"},
+    {base:"#ff5599",glow:"#ff99c4",core:"#ffd4e8"},
+    {base:"#ff9933",glow:"#ffcc80",core:"#fff0d0"},
+    {base:"#44ddaa",glow:"#88ffcc",core:"#d0ffe8"},
+    {base:"#bb66ff",glow:"#dd99ff",core:"#f0d8ff"},
+  ];
+  const jellies=[];
+  let _prevT=0;
+
+  function mkChain(n,x,y,sp){
+    const s=[];
+    for(let i=0;i<n;i++) s.push({x:x+sp*0.1*i,y:y+i*sp,ox:x,oy:y+i*sp});
+    return s;
   }
 
-  function drawBg(t) {
-    if (jelly.style.display === "block") return; // есть реальное видео
-    const w = window.innerWidth, h = window.innerHeight;
-
-    // глубокий градиент
-    const g = bctx.createLinearGradient(0, 0, 0, h);
-    g.addColorStop(0, "#070a18");
-    g.addColorStop(0.55, "#0a0f24");
-    g.addColorStop(1, "#05060d");
-    bctx.fillStyle = g;
-    bctx.fillRect(0, 0, w, h);
-
-    // звёзды
-    for (const p of particles) {
-      p.y -= p.s;
-      p.tw += 0.03;
-      if (p.y < -5) { p.y = h + 5; p.x = Math.random() * w; }
-      const a = 0.35 + 0.35 * Math.sin(p.tw);
-      bctx.beginPath();
-      bctx.arc(p.x, p.y, p.r, 0, Math.PI * 2);
-      bctx.fillStyle = `rgba(190,210,255,${a})`;
-      bctx.fill();
+  function makeJelly(x,y,depth){
+    const sz=35+depth*80+Math.random()*40;
+    const pal=PALETTE[Math.floor(Math.random()*PALETTE.length)];
+    const [cr,cg,cb]=hexRGB(pal.base);
+    const [gr,gg,gb]=hexRGB(pal.glow);
+    const [lr,lg,lb]=hexRGB(pal.core);
+    // oral arms — толстые, короткие, волнистые (4 шт)
+    const arms=[];
+    for(let i=0;i<4;i++){
+      arms.push({
+        segs:mkChain(7+Math.floor(Math.random()*4),x,y,sz*0.2),
+        off:(i-1.5)/1.5*0.6,
+        w:2+Math.random()*2.5,
+        wave:0.8+Math.random()*0.6,
+      });
     }
+    // thin trailing tentacles — длинные, тонкие (8-12 шт)
+    const trails=[];
+    const nTrail=8+Math.floor(Math.random()*5);
+    for(let i=0;i<nTrail;i++){
+      trails.push({
+        segs:mkChain(14+Math.floor(Math.random()*10),x,y,sz*0.18),
+        off:(i-(nTrail-1)/2)/((nTrail-1)/2)*0.85,
+        w:0.4+Math.random()*0.9,
+        wave:0.5+Math.random()*0.8,
+      });
+    }
+    // bell edge vertices for undulation
+    const nEdge=24;
+    const edgePhases=[];
+    for(let i=0;i<nEdge;i++) edgePhases.push(Math.random()*Math.PI*2);
+    // radial channels (внутренние каналы)
+    const nChan=6+Math.floor(Math.random()*4);
 
-    // медузы — мягкие купола со щупальцами
-    for (const j of jellies) {
-      j.y -= j.s * 0.012;
-      if (j.y < -j.r * 2) { j.y = h + j.r * 2; j.x = Math.random() * w; }
-      const bob = Math.sin(t / 1000 + j.ph) * 8;
-      const cx = j.x, cy = j.y + bob;
+    return{
+      x,y,vx:0,vy:0,size:sz,depth,
+      cr,cg,cb,gr,gg,gb,lr,lg,lb,
+      phase:Math.random()*Math.PI*2,
+      pulsePhase:Math.random()*Math.PI*2,
+      pulseSpeed:0.0014+Math.random()*0.0008,
+      pulse:0,angle:0,
+      arms,trails,edgePhases,nEdge,nChan,
+      // bio-luminescence
+      bioPhase:Math.random()*Math.PI*2,
+      bioSpeed:0.001+Math.random()*0.001,
+      // trail particles
+      sparks:[],
+    };
+  }
 
-      const rg = bctx.createRadialGradient(cx, cy, 2, cx, cy, j.r);
-      rg.addColorStop(0, hexA(j.c, 0.55));
-      rg.addColorStop(0.6, hexA(j.c, 0.18));
-      rg.addColorStop(1, hexA(j.c, 0));
-      bctx.fillStyle = rg;
-      bctx.beginPath();
-      bctx.arc(cx, cy, j.r, Math.PI, 0);           // купол
-      bctx.fill();
+  function initJellies(){
+    const w=window.innerWidth,h=window.innerHeight;
+    jellies.length=0;
+    for(let i=0;i<7;i++){
+      const d=0.2+Math.random()*0.8;
+      jellies.push(makeJelly(Math.random()*w,Math.random()*h,d));
+    }
+    jellies.sort((a,b)=>a.depth-b.depth);
+  }
 
-      // щупальца
-      bctx.strokeStyle = hexA(j.c, 0.25);
-      bctx.lineWidth = 1.5;
-      for (let k = -3; k <= 3; k++) {
-        bctx.beginPath();
-        const sx = cx + k * (j.r / 5);
-        bctx.moveTo(sx, cy);
-        for (let s = 0; s <= 6; s++) {
-          const yy = cy + s * (j.r / 3);
-          const xx = sx + Math.sin(t / 500 + s + k) * 6;
-          bctx.lineTo(xx, yy);
-        }
-        bctx.stroke();
+  function simChain(segs,ax,ay,t,wave,grav,damp,segLen,spd){
+    segs[0].x=ax; segs[0].y=ay;
+    for(let i=1;i<segs.length;i++){
+      const s=segs[i];
+      const dx=s.x-s.ox, dy=s.y-s.oy;
+      s.ox=s.x; s.oy=s.y;
+      s.x+=dx*damp+Math.sin(t*0.0025+i*0.7)*wave*spd;
+      s.y+=dy*damp+grav*spd;
+    }
+    for(let iter=0;iter<4;iter++){
+      for(let i=1;i<segs.length;i++){
+        const a=segs[i-1],b=segs[i];
+        const ddx=b.x-a.x,ddy=b.y-a.y;
+        const d=Math.sqrt(ddx*ddx+ddy*ddy)||0.001;
+        const f=(d-segLen)/d*0.5;
+        if(i===1){b.x-=ddx*f*2;b.y-=ddy*f*2;}
+        else{a.x+=ddx*f;a.y+=ddy*f;b.x-=ddx*f;b.y-=ddy*f;}
       }
     }
   }
 
-  function hexA(hex, a) {
-    const n = parseInt(hex.slice(1), 16);
-    const r = (n >> 16) & 255, g = (n >> 8) & 255, b = n & 255;
-    return `rgba(${r},${g},${b},${a})`;
+  function updateJelly(j,t,dt,w,h){
+    const spd=dt/16;
+    // pulsation — asymmetric: fast contract, slow expand (like real jellyfish)
+    const raw=Math.sin(t*j.pulseSpeed+j.pulsePhase);
+    const shaped=raw>0?Math.pow(raw,0.6):-Math.pow(-raw,1.8)*0.4;
+    j.pulse=shaped*0.22;
+    // thrust on contraction
+    const thrust=raw>0.2?(raw-0.2)*0.08*j.depth:0;
+    j.vy+=(-0.012-thrust)*j.depth*spd;
+    j.vx+=Math.sin(t*0.0002+j.phase)*0.006*spd;
+    // gentle horizontal drift
+    j.vx+=(Math.sin(t*0.00013+j.phase*2)-0.5)*0.002*spd;
+    j.vx*=0.994; j.vy*=0.997;
+    j.x+=j.vx*spd; j.y+=j.vy*spd;
+    j.angle+=(j.vx*0.02-j.angle*0.04)*spd;
+    if(j.y<-j.size*6){j.y=h+j.size*4;j.x=Math.random()*w;}
+    if(j.x<-j.size*4) j.x=w+j.size*3;
+    if(j.x>w+j.size*4) j.x=-j.size*3;
+
+    const bw=j.size*(1-j.pulse*0.4);
+    const grav=0.05,damp=0.965;
+    // update arms
+    for(const a of j.arms){
+      const ax=j.x+a.off*bw*0.7, ay=j.y+j.size*0.05;
+      simChain(a.segs,ax,ay,t+a.off*50,a.wave,grav,damp,j.size*0.18,spd);
+    }
+    // update trails
+    for(const tr of j.trails){
+      const ax=j.x+tr.off*bw*0.9, ay=j.y+j.size*0.02;
+      simChain(tr.segs,ax,ay,t+tr.off*80,tr.wave*0.6,grav*0.7,0.975,j.size*0.15,spd);
+    }
+    // sparks
+    if(Math.random()<0.08*j.depth){
+      j.sparks.push({
+        x:j.x+(Math.random()-0.5)*bw,
+        y:j.y+Math.random()*j.size*0.5,
+        vx:(Math.random()-0.5)*0.3,
+        vy:Math.random()*0.4+0.1,
+        life:1,
+      });
+    }
+    for(let i=j.sparks.length-1;i>=0;i--){
+      const s=j.sparks[i];
+      s.x+=s.vx*spd; s.y+=s.vy*spd;
+      s.life-=0.012*spd;
+      if(s.life<=0) j.sparks.splice(i,1);
+    }
+  }
+
+  function drawChain(ctx,segs,w,r,g,b,alpha,glow){
+    if(segs.length<2) return;
+    ctx.beginPath();
+    ctx.moveTo(segs[0].x,segs[0].y);
+    for(let i=1;i<segs.length-1;i++){
+      const mx=(segs[i].x+segs[i+1].x)/2,my=(segs[i].y+segs[i+1].y)/2;
+      ctx.quadraticCurveTo(segs[i].x,segs[i].y,mx,my);
+    }
+    const last=segs[segs.length-1];
+    ctx.lineTo(last.x,last.y);
+    if(glow){ctx.shadowColor=rgba(r,g,b,alpha*0.3);ctx.shadowBlur=6;}
+    const grad=ctx.createLinearGradient(segs[0].x,segs[0].y,last.x,last.y);
+    grad.addColorStop(0,rgba(r,g,b,alpha*0.7));
+    grad.addColorStop(0.5,rgba(r,g,b,alpha*0.35));
+    grad.addColorStop(1,rgba(r,g,b,0));
+    ctx.strokeStyle=grad;
+    ctx.lineWidth=w;
+    ctx.lineCap="round";
+    ctx.lineJoin="round";
+    ctx.stroke();
+    ctx.shadowBlur=0;
+  }
+
+  function drawJelly(ctx,j,t){
+    const a=0.2+j.depth*0.6;
+    const {cr,cg,cb,gr,gg,gb,lr,lg,lb}=j;
+    const bw=j.size*(1-j.pulse*0.4);
+    const bh=j.size*(0.78+j.pulse*0.15);
+    const cx=j.x,cy=j.y;
+    // bio-luminescence pulse
+    const bio=0.6+0.4*Math.sin(t*j.bioSpeed+j.bioPhase);
+
+    ctx.save();
+
+    // 1) thin trailing tentacles (behind everything)
+    for(const tr of j.trails){
+      drawChain(ctx,tr.segs,tr.w*(1+j.pulse*0.3),cr,cg,cb,a*0.4*bio,false);
+    }
+
+    // 2) outer glow halo
+    const haloR=bw*1.6;
+    const hg=ctx.createRadialGradient(cx,cy-bh*0.3,bw*0.2,cx,cy-bh*0.2,haloR);
+    hg.addColorStop(0,rgba(gr,gg,gb,a*0.12*bio));
+    hg.addColorStop(0.5,rgba(cr,cg,cb,a*0.06*bio));
+    hg.addColorStop(1,rgba(cr,cg,cb,0));
+    ctx.fillStyle=hg;
+    ctx.fillRect(cx-haloR,cy-bh-haloR*0.5,haloR*2,bh+haloR*1.5);
+
+    // 3) oral arms (thick, in front of glow, behind bell)
+    for(const arm of j.arms){
+      drawChain(ctx,arm.segs,arm.w*(1+j.pulse*0.5),gr,gg,gb,a*0.55*bio,true);
+    }
+
+    // 4) bell — undulating edge path
+    ctx.beginPath();
+    // top dome via bezier
+    ctx.moveTo(cx-bw,cy);
+    ctx.bezierCurveTo(cx-bw,cy-bh*0.55,cx-bw*0.5,cy-bh,cx,cy-bh);
+    ctx.bezierCurveTo(cx+bw*0.5,cy-bh,cx+bw,cy-bh*0.55,cx+bw,cy);
+    // undulating bottom edge
+    const nE=j.nEdge;
+    for(let i=nE;i>=0;i--){
+      const frac=i/nE;
+      const ex=cx+bw-frac*bw*2;
+      const wave=Math.sin(frac*Math.PI*5+t*0.004+j.edgePhases[i%nE])*bh*0.06;
+      const scallop=Math.sin(frac*Math.PI*nE*0.5)*bh*0.025;
+      const ey=cy+wave+scallop+bh*0.04;
+      ctx.lineTo(ex,ey);
+    }
+    ctx.closePath();
+
+    // multi-layer gradient fill
+    // layer 1: base body — dense center
+    const rg1=ctx.createRadialGradient(cx,cy-bh*0.4,0,cx,cy-bh*0.25,bw*1.2);
+    rg1.addColorStop(0,rgba(lr,lg,lb,a*0.75*bio));
+    rg1.addColorStop(0.2,rgba(gr,gg,gb,a*0.5*bio));
+    rg1.addColorStop(0.5,rgba(cr,cg,cb,a*0.3));
+    rg1.addColorStop(0.8,rgba(...lit(cr,cg,cb,40),a*0.55*bio));
+    rg1.addColorStop(1,rgba(cr,cg,cb,0.01));
+    ctx.fillStyle=rg1;
+    ctx.fill();
+
+    // layer 2: edge glow (additive)
+    ctx.save();
+    ctx.globalCompositeOperation="lighter";
+    const rg2=ctx.createRadialGradient(cx,cy-bh*0.35,bw*0.5,cx,cy-bh*0.3,bw*1.05);
+    rg2.addColorStop(0,rgba(cr,cg,cb,0));
+    rg2.addColorStop(0.6,rgba(cr,cg,cb,0));
+    rg2.addColorStop(0.82,rgba(gr,gg,gb,a*0.35*bio));
+    rg2.addColorStop(0.95,rgba(...lit(gr,gg,gb,50),a*0.45*bio));
+    rg2.addColorStop(1,rgba(cr,cg,cb,0));
+    ctx.fillStyle=rg2;
+    ctx.fill();
+    ctx.restore();
+
+    // 5) inner membrane ring
+    ctx.beginPath();
+    const mw=bw*0.88,mh=bh*0.88;
+    ctx.moveTo(cx-mw,cy);
+    ctx.bezierCurveTo(cx-mw,cy-mh*0.5,cx-mw*0.48,cy-mh,cx,cy-mh);
+    ctx.bezierCurveTo(cx+mw*0.48,cy-mh,cx+mw,cy-mh*0.5,cx+mw,cy);
+    ctx.strokeStyle=rgba(...lit(gr,gg,gb,40),a*0.3*bio);
+    ctx.lineWidth=1.2;
+    ctx.stroke();
+
+    // second inner ring (smaller)
+    ctx.beginPath();
+    const m2w=bw*0.65,m2h=bh*0.65;
+    ctx.moveTo(cx-m2w,cy+bh*0.03);
+    ctx.bezierCurveTo(cx-m2w,cy-m2h*0.45,cx-m2w*0.45,cy-m2h,cx,cy-m2h);
+    ctx.bezierCurveTo(cx+m2w*0.45,cy-m2h,cx+m2w,cy-m2h*0.45,cx+m2w,cy+bh*0.03);
+    ctx.strokeStyle=rgba(lr,lg,lb,a*0.15*bio);
+    ctx.lineWidth=0.8;
+    ctx.stroke();
+
+    // 6) radial channels (veins visible through bell)
+    ctx.globalAlpha=a*0.2*bio;
+    for(let i=0;i<j.nChan;i++){
+      const ang=-Math.PI*0.15+Math.PI*0.3*(i/(j.nChan-1))-Math.PI/2;
+      const wave2=Math.sin(t*0.002+i*1.3+j.phase)*0.08;
+      ctx.beginPath();
+      ctx.moveTo(cx,cy-bh*0.15);
+      const endX=cx+Math.cos(ang+wave2)*bw*0.85;
+      const endY=cy-bh*0.15+Math.sin(ang+wave2)*bh*0.75;
+      const cpX=cx+Math.cos(ang+wave2)*bw*0.4;
+      const cpY=cy-bh*0.15+Math.sin(ang+wave2)*bh*0.35;
+      ctx.quadraticCurveTo(cpX,cpY,endX,endY);
+      ctx.strokeStyle=rgba(lr,lg,lb,1);
+      ctx.lineWidth=0.7;
+      ctx.stroke();
+    }
+    ctx.globalAlpha=1;
+
+    // 7) specular highlights
+    // main highlight
+    const hx=cx-bw*0.22,hy=cy-bh*0.72;
+    const sg=ctx.createRadialGradient(hx,hy,0,hx,hy,bw*0.32);
+    sg.addColorStop(0,rgba(255,255,255,a*0.4*bio));
+    sg.addColorStop(0.5,rgba(255,255,255,a*0.1));
+    sg.addColorStop(1,"rgba(255,255,255,0)");
+    ctx.fillStyle=sg;
+    ctx.beginPath();
+    ctx.ellipse(hx,hy,bw*0.25,bh*0.15,-0.4,0,Math.PI*2);
+    ctx.fill();
+    // secondary highlight
+    const h2x=cx+bw*0.18,h2y=cy-bh*0.82;
+    const sg2=ctx.createRadialGradient(h2x,h2y,0,h2x,h2y,bw*0.14);
+    sg2.addColorStop(0,rgba(255,255,255,a*0.25*bio));
+    sg2.addColorStop(1,"rgba(255,255,255,0)");
+    ctx.fillStyle=sg2;
+    ctx.beginPath();
+    ctx.ellipse(h2x,h2y,bw*0.1,bh*0.06,-0.2,0,Math.PI*2);
+    ctx.fill();
+
+    // 8) bioluminescent core glow (pulsing)
+    ctx.save();
+    ctx.globalCompositeOperation="lighter";
+    const coreGlow=ctx.createRadialGradient(cx,cy-bh*0.35,0,cx,cy-bh*0.35,bw*0.5);
+    coreGlow.addColorStop(0,rgba(lr,lg,lb,a*0.3*bio*bio));
+    coreGlow.addColorStop(0.4,rgba(gr,gg,gb,a*0.12*bio));
+    coreGlow.addColorStop(1,rgba(cr,cg,cb,0));
+    ctx.fillStyle=coreGlow;
+    ctx.beginPath();
+    ctx.ellipse(cx,cy-bh*0.35,bw*0.45,bh*0.35,0,0,Math.PI*2);
+    ctx.fill();
+    ctx.restore();
+
+    // 9) sparks / bioluminescent particles
+    for(const sp of j.sparks){
+      const sa=sp.life*a*0.6*bio;
+      ctx.beginPath();
+      ctx.arc(sp.x,sp.y,1+sp.life,0,Math.PI*2);
+      ctx.fillStyle=rgba(lr,lg,lb,sa);
+      ctx.fill();
+    }
+
+    ctx.restore();
+  }
+
+  function drawBg(t){
+    if(jelly.style.display==="block") return;
+    const w=window.innerWidth,h=window.innerHeight;
+    const dt=_prevT?Math.min(t-_prevT,50):16;
+    _prevT=t;
+
+    // deep ocean gradient
+    const g=bctx.createLinearGradient(0,0,0,h);
+    g.addColorStop(0,"#030612");
+    g.addColorStop(0.3,"#060d1f");
+    g.addColorStop(0.7,"#0a0f24");
+    g.addColorStop(1,"#030508");
+    bctx.fillStyle=g;
+    bctx.fillRect(0,0,w,h);
+
+    // underwater light rays from above
+    bctx.save();
+    bctx.globalCompositeOperation="lighter";
+    for(let i=0;i<3;i++){
+      const rx=w*0.2+i*w*0.3+Math.sin(t*0.0002+i*2)*w*0.05;
+      const rg=bctx.createLinearGradient(rx,0,rx+w*0.08,h*0.7);
+      rg.addColorStop(0,`rgba(60,100,180,${0.015+0.01*Math.sin(t*0.0005+i)})`);
+      rg.addColorStop(1,"rgba(60,100,180,0)");
+      bctx.fillStyle=rg;
+      bctx.beginPath();
+      bctx.moveTo(rx-w*0.03,0);
+      bctx.lineTo(rx+w*0.05,0);
+      bctx.lineTo(rx+w*0.12,h*0.7);
+      bctx.lineTo(rx-w*0.01,h*0.7);
+      bctx.fill();
+    }
+    bctx.restore();
+
+    // particle stars
+    for(const p of particles){
+      p.y-=p.s;
+      p.tw+=0.025;
+      if(p.y<-5){p.y=h+5;p.x=Math.random()*w;}
+      const pa=0.25+0.25*Math.sin(p.tw);
+      bctx.beginPath();
+      bctx.arc(p.x,p.y,p.r,0,Math.PI*2);
+      bctx.fillStyle=rgba(160,200,255,pa);
+      bctx.fill();
+    }
+
+    for(const j of jellies){
+      updateJelly(j,t,dt,w,h);
+      drawJelly(bctx,j,t);
+    }
   }
 
   // ============================================================
@@ -239,7 +612,7 @@
     }
 
     drawBg(t);
-    drawWave(t);
+    drawAura(t);
     requestAnimationFrame(loop);
   }
 
@@ -287,7 +660,7 @@
   }
 
   // ── init ────────────────────────────────────────────────
-  function resizeAll() { sizeBg(); sizeWave(); initJellies(); }
+  function resizeAll() { sizeBg(); sizeWave(); sizeAura(); initJellies(); }
   window.addEventListener("resize", resizeAll);
 
   // ручной триггер для отладки без сервера: клавиши 1..5
@@ -298,6 +671,7 @@
 
   sizeBg();
   sizeWave();
+  sizeAura();
   initJellies();
   setMode("idle");
   tryVideo();
