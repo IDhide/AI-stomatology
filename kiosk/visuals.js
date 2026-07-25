@@ -1,7 +1,7 @@
-// Визуализатор «плазменная туманность» — точно по референс-видео:
-// тёмное ядро, вокруг — мягкое светящееся сине-фиолетовое кольцо с розовыми
-// акцентами, всё диффузное, по полю расходятся тонкие концентрические волны.
-// Полноэкранный фрагментный шейдер; голос усиливает волны и яркость.
+// Визуализатор «fluid nebula» — тёмное ядро-сфера, органическое светящееся
+// облако вокруг с плотными концентрическими рябью-волнами, эквалайзер,
+// неоновая палитра: electric blue → violet → magenta. Всё — полноэкранный
+// фрагментный шейдер на Three.js; JS-класс не изменён.
 import * as THREE from "three";
 
 const VERT = /* glsl */ `
@@ -12,131 +12,197 @@ const FRAG = /* glsl */ `
   precision highp float;
   uniform vec2  uRes;
   uniform float uTime;
-  uniform float uAmp;      // 0..1 голос (общая громкость)
-  uniform float uActivity; // «дыхание» состояния
-  uniform float uBands[8]; // 8 частотных полос голоса (эквалайзер)
+  uniform float uAmp;
+  uniform float uActivity;
+  uniform float uBands[8];
 
-  // ── value noise + fbm ──────────────────────────────────────────
-  float hash(vec2 p){ return fract(sin(dot(p, vec2(127.1,311.7)))*43758.5453123); }
-  float noise(vec2 p){
-    vec2 i=floor(p), f=fract(p); f=f*f*(3.0-2.0*f);
-    return mix(mix(hash(i),hash(i+vec2(1,0)),f.x),
-               mix(hash(i+vec2(0,1)),hash(i+vec2(1,1)),f.x),f.y);
+  // ── simplex 2D (Ashima) ────────────────────────────────────────
+  vec3 mod289(vec3 x){ return x - floor(x * (1.0/289.0)) * 289.0; }
+  vec2 mod289(vec2 x){ return x - floor(x * (1.0/289.0)) * 289.0; }
+  vec3 permute(vec3 x){ return mod289(((x*34.0)+1.0)*x); }
+
+  float snoise(vec2 v){
+    const vec4 C = vec4(0.211324865405187, 0.366025403784439,
+                       -0.577350269189626, 0.024390243902439);
+    vec2 i  = floor(v + dot(v, C.yy));
+    vec2 x0 = v - i + dot(i, C.xx);
+    vec2 i1 = (x0.x > x0.y) ? vec2(1.0, 0.0) : vec2(0.0, 1.0);
+    vec4 x12 = x0.xyxy + C.xxzz;
+    x12.xy -= i1;
+    i = mod289(i);
+    vec3 p = permute(permute(i.y + vec3(0.0, i1.y, 1.0))
+                            + i.x + vec3(0.0, i1.x, 1.0));
+    vec3 m = max(0.5 - vec3(dot(x0,x0), dot(x12.xy,x12.xy),
+                             dot(x12.zw,x12.zw)), 0.0);
+    m = m*m; m = m*m;
+    vec3 x = 2.0 * fract(p * C.www) - 1.0;
+    vec3 h = abs(x) - 0.5;
+    vec3 ox = floor(x + 0.5);
+    vec3 a0 = x - ox;
+    m *= 1.79284291400159 - 0.85373472095314 * (a0*a0 + h*h);
+    vec3 g;
+    g.x = a0.x * x0.x + h.x * x0.y;
+    g.yz = a0.yz * x12.xz + h.yz * x12.yw;
+    return 130.0 * dot(m, g);
   }
+
   float fbm(vec2 p){
-    float v=0.0, a=0.5;
-    for(int i=0;i<4;i++){ v+=a*noise(p); p*=2.03; a*=0.5; }
+    float v = 0.0, a = 0.5;
+    vec2 shift = vec2(100.0);
+    mat2 rot = mat2(cos(0.5), sin(0.5), -sin(0.5), cos(0.5));
+    for (int i = 0; i < 6; i++){
+      v += a * snoise(p);
+      p = rot * p * 2.02 + shift;
+      a *= 0.48;
+    }
     return v;
   }
 
   void main(){
-    vec2 uv = (gl_FragCoord.xy - 0.5*uRes) / min(uRes.x, uRes.y);
+    vec2 uv = (gl_FragCoord.xy - 0.5 * uRes) / min(uRes.x, uRes.y);
     float r = length(uv);
-    // направление вместо угла — нет шва на границе atan
-    vec2 dir = uv / max(r, 1e-4);
+    vec2 dir = uv / max(r, 1e-5);
     float t = uTime;
 
-    // ── эквалайзер по секторам: каждой стороне — своя полоса голоса ─
-    // угол 0..1 по кругу → плавная интерполяция между 8 полосами
+    // ── эквалайзер по секторам ────────────────────────────────────
     float a01 = atan(uv.y, uv.x) / 6.2831853 + 0.5;
     float bp = a01 * 8.0;
     float band = 0.0;
-    for (int i = 0; i < 8; i++) {
+    for (int i = 0; i < 8; i++){
       float fi = float(i);
       float w = max(0.0, 1.0 - abs(bp - fi));
-      w = max(w, max(0.0, 1.0 - abs(bp - fi - 8.0)));   // замыкание круга
+      w = max(w, max(0.0, 1.0 - abs(bp - fi - 8.0)));
       w = max(w, max(0.0, 1.0 - abs(bp - fi + 8.0)));
       band += uBands[i] * w;
     }
 
-    // ── форма кольца: лёгкая органика + выпуклости от полос голоса ─
-    float wob = (fbm(dir*1.5 + vec2(3.0, t*0.08)) - 0.5) * 0.07
-              + band * 0.05;                            // «кривизна» от голоса
-    float r0 = 0.27 + wob + uAmp*0.015;
-
-    float d = r - r0;
-
-    // ── профиль света: тёмное ядро, компактное кольцо, ореол ──────
-    float ring  = exp(-d*d / 0.008);
-    float halo  = exp(-max(d, 0.0) * 5.5) * 0.45;       // ореол компактнее
-    float core  = smoothstep(0.0, r0*0.92, r);          // затемнение ядра
-    float inner = exp(-max(-d, 0.0) * 7.0) * 0.40;      // свет у кромки ядра
-
-    // ── волны: только вокруг шара, дальше быстро гаснут ───────────
-    float waveZone = exp(-max(d, 0.0) * 6.0);           // радиус распространения
-    float speed = 1.4 + uAmp*4.0;
-    float wPhase = r*150.0 - t*speed*1.8
-                 + fbm(dir*2.0 + vec2(0.0, t*0.10))*4.0;
-    float waves  = pow(0.5 + 0.5*sin(wPhase), 3.0);     // тонкие гребни
-    // амплитуда волн в направлении сектора = его полоса голоса
-    float wAmp = (0.05 + uActivity*0.03 + band*0.55 + uAmp*0.10) * waveZone;
-    float lit = (ring*0.9 + halo + inner) * mix(1.0 - wAmp, 1.0, waves);
-    lit *= mix(0.08, 1.0, core);                        // ядро остаётся тёмным
-
-    // ── 3D-объём: свет сверху-слева, низ кольца в тени ────────────
-    float lightSide = dot(dir, normalize(vec2(-0.35, 0.80)));
-    lit *= 0.72 + 0.38*lightSide;
-
-    // ── цвет: ФИОЛЕТОВАЯ гамма (бренд), розовые акценты ───────────
-    float hueA = fbm(dir*1.2 + vec2(17.0, t*0.06));
-    float hueB = fbm(dir*0.9 + vec2(-7.0, t*0.04));
-    vec3 deepViolet = vec3(0.16, 0.06, 0.45);
-    vec3 violet     = vec3(0.46, 0.20, 0.96);   // #7b3ff2 — бренд
-    vec3 magenta    = vec3(0.72, 0.28, 0.95);
-    vec3 pink       = vec3(0.95, 0.55, 0.95);
-    vec3 blueAccent = vec3(0.28, 0.28, 0.95);
-
-    vec3 col = mix(deepViolet, violet, smoothstep(0.15, 0.60, hueA));
-    col = mix(col, magenta, smoothstep(0.55, 0.85, hueB) * 0.8);
-    col = mix(col, pink,   smoothstep(0.80, 0.97, hueA) * 0.6);
-    col = mix(col, blueAccent, smoothstep(0.20, 0.0, hueA) * 0.25);
-
-    // ── фон: глубокий тёмно-фиолетовый с 3D-градиентом ядра ───────
-    vec3 bg = mix(vec3(0.050, 0.022, 0.120), vec3(0.014, 0.007, 0.040),
-                  smoothstep(0.0, 1.15, r));
-    // ядро не плоское: мягкий объёмный градиент, светлее к верху
-    bg += vec3(0.10, 0.05, 0.24) * exp(-r*3.0)
-        * (0.35 + 0.30*dot(dir, vec2(0.0, 1.0))) * (1.0 - core);
-
-    vec3 final = bg + col * lit * (0.55 + uAmp*0.55);
-
-    // виньетирование — компактная «сфера света» в тёмном поле
-    final *= 1.0 - 0.42*smoothstep(0.55, 1.25, r);
-
-    // ── объёмный 3D-шар в центре (как на референсе) ───────────────
-    float sr = 0.185 + uAmp*0.012 + uActivity*0.004;    // дышит с голосом
+    // ── ядро-сфера (тёмная void) ─────────────────────────────────
+    float sr = 0.180 + uAmp * 0.014 + uActivity * 0.005;
     float sd = r - sr;
-    float sphereMask = smoothstep(0.008, -0.008, sd);
+    float sphereMask = smoothstep(0.006, -0.006, sd);
 
-    if (sphereMask > 0.0) {
-      // нормаль точки сферы — честное 3D
-      float nz = sqrt(max(1.0 - (r*r)/(sr*sr), 0.0));
-      vec3 N = vec3(uv/sr, nz);
-      // лёгкая органическая рябь поверхности при речи
-      float bump = (fbm(uv*7.0 + vec2(t*0.25, -t*0.18)) - 0.5) * (0.15 + uAmp*0.6);
-      N = normalize(N + vec3(bump*0.25));
+    // ── органическая деформация внешнего контура (fluid blob) ──────
+    float distortAmp = 0.025 + uAmp * 0.06 + uActivity * 0.02;
+    float warp1 = fbm(dir * 2.5 + vec2(t * 0.12, 3.7)) * distortAmp;
+    float warp2 = snoise(dir * 4.0 + vec2(-t * 0.08, 7.0)) * distortAmp * 0.5;
+    float outerBlob = sr + 0.09 + warp1 + warp2 + band * 0.025;
+    float d = r - outerBlob;
 
-      vec3 L = normalize(vec3(-0.38, 0.70, 0.55));      // свет сверху-слева
-      float lam = clamp(dot(N, L), 0.0, 1.0);
+    // ── плотные концентрические волны (3 слоя, чистые кольца) ─────
+    float waveZone = exp(-max(d, 0.0) * 5.0);
+    float speed = 1.6 + uAmp * 5.0;
+    float wAmpTotal = 0.04 + uActivity * 0.03 + band * 0.50 + uAmp * 0.12;
 
-      vec3 sBase = vec3(0.16, 0.06, 0.42);              // тень
-      vec3 sMid  = vec3(0.44, 0.20, 0.94);              // бренд-фиолет
-      vec3 sHi   = vec3(0.80, 0.64, 1.00);              // блик-лаванда
+    // Лёгкая органика: небольшое радиальное смещение через шум,
+    // НО без углового искажения — кольца остаются круглыми.
+    float radialWarp = (snoise(dir * 1.8 + vec2(t * 0.07, 2.0)) - 0.5) * 0.006;
 
-      vec3 sc = mix(sBase, sMid, smoothstep(0.0, 0.85, lam));
-      sc = mix(sc, sHi, pow(lam, 4.0) * 0.85);          // мягкий верхний блик
-      float rimS = pow(1.0 - nz, 2.6);                  // светящаяся кромка
-      sc += vec3(0.52, 0.32, 1.00) * rimS * 0.55;
-      sc *= 1.0 + uAmp*0.45;                            // голос подсвечивает
-      sc *= 0.97 + 0.06*fbm(uv*5.0 + t*0.1);            // живая поверхность
+    // слой 1 — мелкая рябь (высокая частота)
+    float ph1 = (r + radialWarp) * 180.0 - t * speed * 2.2;
+    float w1 = smoothstep(0.3, 0.5, 0.5 + 0.5 * sin(ph1)) * 0.35;
 
-      final = mix(final, sc, sphereMask);
-    }
-    // свечение сразу за кромкой шара — связывает его с туманностью
-    final += violet * exp(-max(sd, 0.0) * 26.0) * (0.20 + uAmp*0.25)
-           * (1.0 - sphereMask);
+    // слой 2 — средние волны
+    float ph2 = (r + radialWarp * 1.3) * 110.0 - t * speed * 1.5;
+    float w2 = smoothstep(0.35, 0.5, 0.5 + 0.5 * sin(ph2)) * 0.45;
 
-    gl_FragColor = vec4(final, 1.0);
+    // слой 3 — широкие гребни
+    float ph3 = (r + radialWarp * 0.7) * 65.0 - t * speed * 0.9;
+    float w3 = smoothstep(0.4, 0.5, 0.5 + 0.5 * sin(ph3)) * 0.25;
+
+    float waves = (w1 + w2 + w3) * wAmpTotal;
+
+    // ── профиль свечения: кольцо + ореол + внутренний край ─────────
+    float ring  = exp(-d * d / 0.012);
+    float halo  = exp(-max(d, 0.0) * 3.8) * 0.55;
+    float inner = exp(-max(-d, 0.0) * 9.0) * 0.45;
+    float core  = smoothstep(0.0, sr * 0.85, r);
+
+    float litBase = ring * 0.85 + halo + inner;
+    litBase *= (1.0 - waves * wAmpTotal * 2.5);
+    litBase *= mix(0.06, 1.0, core);
+
+    // ── 3D-освещение кольца: свет снизу-слева, тень сверху ────────
+    float lightKey = dot(dir, normalize(vec2(-0.50, -0.65)));
+    float lightFill = dot(dir, normalize(vec2(0.60, 0.20)));
+    litBase *= 0.55 + 0.45 * smoothstep(-0.3, 0.9, lightKey);
+
+    // ── палитра: electric blue → violet → neon magenta ─────────────
+    float hueA = fbm(dir * 1.4 + vec2(17.0, t * 0.055));
+    float hueB = fbm(dir * 1.1 + vec2(-7.0, t * 0.040));
+    float hueC = fbm(dir * 0.8 + vec2(22.0, t * 0.030));
+
+    vec3 deepBlue    = vec3(0.05, 0.10, 0.50);
+    vec3 electricBlue= vec3(0.15, 0.30, 0.95);
+    vec3 violet      = vec3(0.46, 0.20, 0.96);
+    vec3 neonMagenta = vec3(0.95, 0.15, 0.85);
+    vec3 neonPink    = vec3(1.00, 0.30, 0.70);
+
+    vec3 col = mix(deepBlue, electricBlue, smoothstep(0.0, 0.45, hueA));
+    col = mix(col, violet, smoothstep(0.30, 0.65, hueB) * 0.85);
+    col = mix(col, neonMagenta, smoothstep(0.55, 0.82, hueC) * 0.80);
+    col = mix(col, neonPink, smoothstep(0.80, 0.97, hueA) * 0.50);
+
+    // ── фон ───────────────────────────────────────────────────────
+    vec3 bg = mix(vec3(0.025, 0.015, 0.080), vec3(0.008, 0.004, 0.025),
+                  smoothstep(0.0, 1.2, r));
+    bg += vec3(0.06, 0.04, 0.18) * exp(-r * 3.5)
+        * (0.30 + 0.25 * lightFill) * (1.0 - core);
+
+    vec3 final_col = bg + col * litBase * (0.50 + uAmp * 0.60);
+
+    // ── bloom: мягкое свечение вокруг активной зоны ────────────────
+    float bloom = exp(-max(d, 0.0) * 2.2) * 0.35;
+    float bloomOuter = exp(-max(d - 0.04, 0.0) * 3.5) * 0.18;
+    vec3 bloomCol = mix(violet, neonMagenta, 0.5 + 0.3 * sin(t * 0.4));
+    final_col += bloomCol * (bloom + bloomOuter) * (0.4 + uAmp * 0.5);
+
+    // виньетирование
+    final_col *= 1.0 - 0.50 * smoothstep(0.50, 1.30, r);
+
+    // ── 3D-сфера-ядро ────────────────────────────────────────────
+    float nz = sqrt(max(1.0 - (r * r) / (sr * sr), 0.0));
+    vec3 N = vec3(uv / sr, nz);
+
+    float bump = (snoise(uv * 8.0 + vec2(t * 0.3, -t * 0.2)) - 0.5)
+               * (0.12 + uAmp * 0.5);
+    N = normalize(N + vec3(bump * 0.20));
+
+    vec3 L = normalize(vec3(-0.35, 0.65, 0.60));
+    float diff = clamp(dot(N, L), 0.0, 1.0);
+
+    vec3 sBase = vec3(0.04, 0.02, 0.10);
+    vec3 sMid  = vec3(0.22, 0.12, 0.55);
+    vec3 sHi   = vec3(0.70, 0.55, 1.00);
+
+    vec3 sc = mix(sBase, sMid, smoothstep(0.0, 0.80, diff));
+    sc = mix(sc, sHi, pow(diff, 5.0) * 0.80);
+
+    // ── неоновый магента-блик снизу-слева ─────────────────────────
+    vec3 Lspec = normalize(vec3(-0.55, -0.70, 0.75));
+    vec3 V = vec3(0.0, 0.0, 1.0);
+    vec3 H = normalize(Lspec + V);
+    float spec = pow(max(0.0, dot(N, H)), 24.0);
+    sc += neonMagenta * spec * 0.90;
+
+    // ── мягкий синий ambient справа ────────────────────────────────
+    float ambient = max(0.0, dot(N, normalize(vec3(0.70, 0.15, 0.50))));
+    sc += electricBlue * ambient * 0.18;
+
+    // rim light — светящаяся кромка
+    float rim = pow(1.0 - nz, 3.0);
+    sc += mix(neonMagenta, violet, 0.5) * rim * 0.50;
+
+    sc *= 1.0 + uAmp * 0.40;
+    sc *= 0.96 + 0.07 * snoise(uv * 6.0 + t * 0.12);
+
+    final_col = mix(final_col, sc, sphereMask);
+
+    // свечение у кромки шара
+    final_col += mix(violet, neonMagenta, 0.6)
+               * exp(-max(sd, 0.0) * 30.0) * (0.18 + uAmp * 0.28)
+               * (1.0 - sphereMask);
+
+    gl_FragColor = vec4(final_col, 1.0);
   }
 `;
 
