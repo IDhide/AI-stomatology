@@ -76,7 +76,6 @@ const FRAG = /* glsl */ `
       - 0.85373472095314 * (a0 * a0 + h * h);
 
     vec3 g;
-
     g.x = a0.x * x0.x + h.x * x0.y;
     g.yz = a0.yz * x12.xz + h.yz * x12.yw;
 
@@ -160,10 +159,6 @@ const FRAG = /* glsl */ `
       1.0
     );
 
-    /*
-     * Центральная сфера.
-     */
-
     float sphereRadius =
       0.180
       + uAmp * 0.010
@@ -177,11 +172,6 @@ const FRAG = /* glsl */ `
       -0.006,
       sphereDistance
     );
-
-    /*
-     * Органически деформированный контур,
-     * от которого начинаются волны.
-     */
 
     float contourNoiseA = fbm(
       direction * 1.55
@@ -244,18 +234,13 @@ const FRAG = /* glsl */ `
     float contourDistance =
       radius - waveOrigin;
 
-    /*
-     * Жидкое искажение отдельных волн.
-     */
-
     float movingRippleNoise = snoise(
       direction * 3.60
       + vec2(
         time * 0.105,
         -time * 0.085
       )
-      + contourDistance
-      * vec2(9.0, -6.5)
+      + contourDistance * vec2(9.0, -6.5)
     );
 
     float localRippleNoise = snoise(
@@ -267,18 +252,15 @@ const FRAG = /* glsl */ `
     );
 
     float rippleNoiseAmplitude =
-      0.0025
-      + uActivity * 0.0018
-      + uAmp * 0.0075
-      + bandSoft * 0.0050;
+      0.0024
+      + uActivity * 0.0017
+      + uAmp * 0.0070
+      + bandSoft * 0.0048;
 
     float distortedDistance =
       contourDistance
-      + movingRippleNoise
-      * rippleNoiseAmplitude
-      + localRippleNoise
-      * rippleNoiseAmplitude
-      * 0.32;
+      + movingRippleNoise * rippleNoiseAmplitude
+      + localRippleNoise * rippleNoiseAmplitude * 0.28;
 
     float outerShapeNoise = fbm(
       direction * 1.25
@@ -288,20 +270,15 @@ const FRAG = /* glsl */ `
       )
     );
 
-    /*
-     * Компактная область волн.
-     * Они не распространяются по всему экрану.
-     */
-
     float outerExtent = clamp(
-      0.128
-      + outerShapeNoise * 0.020
+      0.126
+      + outerShapeNoise * 0.018
       + bandSoft * (
-        0.012 + uAmp * 0.014
+        0.012 + uAmp * 0.013
       )
       + uActivity * 0.006,
-      0.100,
-      0.175
+      0.098,
+      0.170
     );
 
     float innerGate = smoothstep(
@@ -312,7 +289,7 @@ const FRAG = /* glsl */ `
 
     float outerGate =
       1.0 - smoothstep(
-        outerExtent - 0.038,
+        outerExtent - 0.036,
         outerExtent + 0.004,
         contourDistance
       );
@@ -328,14 +305,11 @@ const FRAG = /* glsl */ `
         0.0,
         1.0
       ),
-      1.08
+      1.02
     );
 
-    /*
-     * Широкие и мягкие концентрические волны.
-     */
-
-    float ringFrequency = 760.0;
+    // Более читаемые линии, но не игольчатые
+    float ringFrequency = 790.0;
 
     float ringPhase =
       distortedDistance * ringFrequency
@@ -344,37 +318,37 @@ const FRAG = /* glsl */ `
     float ringCarrier =
       0.5 + 0.5 * cos(ringPhase);
 
-    float sharpRidges = pow(
-      ringCarrier,
-      6.5
-    );
-
     float softRidges = pow(
       ringCarrier,
-      2.2
+      1.95
+    );
+
+    float sharpRidges = pow(
+      ringCarrier,
+      5.0
     );
 
     float darkGrooves = pow(
       1.0 - ringCarrier,
-      3.0
+      2.7
     );
 
     float slowModulation =
-      0.84
-      + 0.16 * sin(
-        distortedDistance * 62.0
-        - uWaveTime * 0.12
-        + contourNoiseB * 1.6
+      0.86
+      + 0.14 * sin(
+        distortedDistance * 60.0
+        - uWaveTime * 0.11
+        + contourNoiseB * 1.5
       );
 
     float lineTexture =
-      0.88
-      + 0.12 * (
+      0.90
+      + 0.10 * (
         0.5
         + 0.5 * snoise(
           vec2(
-            angle01 * 11.0,
-            distortedDistance * 34.0
+            angle01 * 10.5,
+            distortedDistance * 30.0
           )
           + vec2(
             time * 0.035,
@@ -384,12 +358,12 @@ const FRAG = /* glsl */ `
       );
 
     float angularPatch =
-      0.80
-      + 0.20 * smoothstep(
+      0.84
+      + 0.16 * smoothstep(
         -0.45,
         0.65,
         snoise(
-          direction * 2.10
+          direction * 2.05
           + vec2(
             -time * 0.028,
             14.0
@@ -397,35 +371,34 @@ const FRAG = /* glsl */ `
         )
       );
 
-    float waveLines = mix(
+    float ridgeProfile = mix(
       softRidges,
       sharpRidges,
-      0.55
+      0.68
     );
 
-    waveLines *= slowModulation;
-    waveLines *= lineTexture;
-    waveLines *= angularPatch;
-    waveLines *= waveZone;
-    waveLines *= radialDecay;
+    float waveLines =
+      ridgeProfile
+      * slowModulation
+      * lineTexture
+      * angularPatch
+      * waveZone
+      * radialDecay;
 
     float waveShadows =
       darkGrooves
       * waveZone
       * radialDecay;
 
+    // Более аккуратная подложка, чтобы не мылить линии
     float waveSoftGlow =
       softRidges
       * waveZone
       * radialDecay
       * (
-        0.38
-        + 0.30 * audioEnergy
+        0.20
+        + 0.16 * audioEnergy
       );
-
-    /*
-     * Цветная плазма между линиями.
-     */
 
     float plasmaField = fbm(
       direction * 2.15
@@ -444,24 +417,18 @@ const FRAG = /* glsl */ `
       * radialDecay
       * plasmaNoise
       * (
-        0.24
-        + 0.22 * uActivity
-        + 0.22 * audioEnergy
+        0.22
+        + 0.18 * uActivity
+        + 0.18 * audioEnergy
       );
 
     float edgeGlow =
-      exp(
-        -abs(contourDistance) * 32.0
-      )
+      exp(-abs(contourDistance) * 33.0)
       * innerGate
       * (
-        0.56
-        + 0.42 * audioEnergy
+        0.54
+        + 0.36 * audioEnergy
       );
-
-    /*
-     * Направленное освещение.
-     */
 
     float lightKey = dot(
       direction,
@@ -482,22 +449,9 @@ const FRAG = /* glsl */ `
       );
 
     plasmaBody *= directionalLight;
-
-    edgeGlow *=
-      0.78
-      + 0.22 * directionalLight;
-
-    waveLines *=
-      0.82
-      + 0.28 * directionalLight;
-
-    waveSoftGlow *=
-      0.85
-      + 0.22 * directionalLight;
-
-    /*
-     * Палитра.
-     */
+    edgeGlow *= 0.80 + 0.20 * directionalLight;
+    waveLines *= 0.88 + 0.22 * directionalLight;
+    waveSoftGlow *= 0.86 + 0.16 * directionalLight;
 
     float hueA = contourNoiseA;
     float hueB = outerShapeNoise;
@@ -585,13 +539,9 @@ const FRAG = /* glsl */ `
 
     lineColor = mix(
       lineColor,
-      vec3(0.82, 0.72, 1.00),
-      0.20 + 0.15 * audioEnergy
+      vec3(0.86, 0.76, 1.00),
+      0.18 + 0.10 * audioEnergy
     );
-
-    /*
-     * Фиолетовый фон всего экрана.
-     */
 
     vec3 backgroundCenter = vec3(
       0.105,
@@ -631,10 +581,6 @@ const FRAG = /* glsl */ `
       )
     );
 
-    /*
-     * Большое мягкое фиолетовое облако.
-     */
-
     float purpleMist = exp(
       -radius * radius * 2.45
     );
@@ -655,11 +601,6 @@ const FRAG = /* glsl */ `
       0.255
     ) * purpleMist * backgroundNoise;
 
-    /*
-     * Широкое фиолетовое свечение,
-     * заметное за пределами шара.
-     */
-
     float widePurpleAura = exp(
       -radius * 1.85
     );
@@ -671,10 +612,6 @@ const FRAG = /* glsl */ `
     ) * widePurpleAura * (
       0.82 + 0.18 * lightFill
     );
-
-    /*
-     * Небольшая синяя дымка справа.
-     */
 
     float blueMistDirection = smoothstep(
       -0.70,
@@ -690,41 +627,33 @@ const FRAG = /* glsl */ `
       * blueMistDirection
       * 0.025;
 
-    /*
-     * Итоговая сборка плазмы и волн.
-     */
-
     vec3 finalColor = background;
 
     finalColor += plasmaColor
       * plasmaBody
       * (
-        0.92 + uAmp * 0.46
+        0.82 + uAmp * 0.36
       );
 
     finalColor += plasmaColor
       * edgeGlow
-      * 0.82;
+      * 0.76;
 
     finalColor += lineColor
       * waveLines
       * (
-        0.95
-        + uActivity * 0.24
-        + audioEnergy * 0.95
+        1.10
+        + uActivity * 0.20
+        + audioEnergy * 0.78
       );
 
     finalColor += lineColor
       * waveSoftGlow
-      * 0.22;
+      * 0.14;
 
     finalColor -= plasmaColor
       * waveShadows
-      * 0.050;
-
-    /*
-     * Компактный bloom вокруг волн.
-     */
+      * 0.075;
 
     float bloomGate = innerGate * (
       1.0 - smoothstep(
@@ -737,29 +666,24 @@ const FRAG = /* glsl */ `
     float compactBloom =
       exp(
         -max(contourDistance, 0.0)
-        * 13.5
+        * 14.0
       )
       * bloomGate;
 
     vec3 bloomColor = mix(
       violet,
       neonMagenta,
-      0.50
-      + 0.20 * sin(time * 0.35)
+      0.50 + 0.18 * sin(time * 0.35)
     );
 
+    // Немного уменьшен bloom, чтобы линии не терялись
     finalColor += bloomColor
       * compactBloom
       * (
-        0.11
-        + 0.10 * uActivity
-        + 0.13 * audioEnergy
+        0.075
+        + 0.070 * uActivity
+        + 0.090 * audioEnergy
       );
-
-    /*
-     * Мягкая виньетка.
-     * Не затемняет фиолетовый фон слишком сильно.
-     */
 
     finalColor *=
       1.0
@@ -769,18 +693,11 @@ const FRAG = /* glsl */ `
         radius
       );
 
-    /*
-     * Объёмная центральная сфера.
-     */
-
     float normalZ = sqrt(
       max(
         1.0
-        - (
-          radius * radius
-        ) / (
-          sphereRadius * sphereRadius
-        ),
+        - (radius * radius)
+        / (sphereRadius * sphereRadius),
         0.0
       )
     );
@@ -798,12 +715,12 @@ const FRAG = /* glsl */ `
       )
     ) * (
       0.10
-      + uAmp * 0.32
+      + uAmp * 0.28
     );
 
     normal = normalize(
       normal
-      + vec3(sphereBump * 0.18)
+      + vec3(sphereBump * 0.16)
     );
 
     vec3 lightDirection = normalize(
@@ -816,21 +733,22 @@ const FRAG = /* glsl */ `
       1.0
     );
 
+    // Круг чуть светлее: на полтона меньше черный
     vec3 sphereBase = vec3(
-      0.030,
-      0.014,
-      0.075
+      0.050,
+      0.024,
+      0.100
     );
 
     vec3 sphereMid = vec3(
-      0.180,
-      0.085,
-      0.440
+      0.205,
+      0.100,
+      0.490
     );
 
     vec3 sphereHighlight = vec3(
-      0.620,
-      0.480,
+      0.650,
+      0.500,
       1.000
     );
 
@@ -840,19 +758,22 @@ const FRAG = /* glsl */ `
       smoothstep(
         0.0,
         0.82,
-        diffuse
+        diffuse + 0.08
       )
     );
 
     sphereColor = mix(
       sphereColor,
       sphereHighlight,
-      pow(diffuse, 5.0) * 0.72
+      pow(diffuse, 5.0) * 0.66
     );
 
-    /*
-     * Магентовый блик на сфере.
-     */
+    // Лёгкий внутренний подъём яркости, чтобы не был провалом
+    sphereColor += vec3(
+      0.020,
+      0.010,
+      0.040
+    ) * (0.45 + 0.15 * uAmp);
 
     vec3 specularLight = normalize(
       vec3(-0.55, -0.70, 0.75)
@@ -878,11 +799,7 @@ const FRAG = /* glsl */ `
 
     sphereColor += neonMagenta
       * specular
-      * 0.82;
-
-    /*
-     * Синее ambient-освещение справа.
-     */
+      * 0.78;
 
     float ambient = max(
       0.0,
@@ -896,11 +813,7 @@ const FRAG = /* glsl */ `
 
     sphereColor += electricBlue
       * ambient
-      * 0.16;
-
-    /*
-     * Светящаяся кромка сферы.
-     */
+      * 0.15;
 
     float rim = pow(
       1.0 - normalZ,
@@ -911,16 +824,15 @@ const FRAG = /* glsl */ `
       neonMagenta,
       violet,
       0.5
-    ) * rim * 0.48;
+    ) * rim * 0.44;
 
     sphereColor *=
-      1.0 + uAmp * 0.30;
+      1.0 + uAmp * 0.26;
 
     sphereColor *=
-      0.97
-      + 0.05 * snoise(
-        uv * 6.0
-        + time * 0.12
+      0.98
+      + 0.04 * snoise(
+        uv * 6.0 + time * 0.12
       );
 
     finalColor = mix(
@@ -929,14 +841,8 @@ const FRAG = /* glsl */ `
       sphereMask
     );
 
-    /*
-     * Яркая тонкая кромка шарика.
-     */
-
     float sphereRim =
-      exp(
-        -abs(sphereDistance) * 60.0
-      )
+      exp(-abs(sphereDistance) * 58.0)
       * (1.0 - sphereMask);
 
     finalColor += mix(
@@ -944,18 +850,13 @@ const FRAG = /* glsl */ `
       neonMagenta,
       0.58
     ) * sphereRim * (
-      0.32
-      + uAmp * 0.34
-      + bandSoft * 0.14
+      0.28
+      + uAmp * 0.28
+      + bandSoft * 0.12
     );
 
-    /*
-     * Более широкое свечение вокруг шарика.
-     */
-
     float sphereGlow = exp(
-      -max(sphereDistance, 0.0)
-      * 22.0
+      -max(sphereDistance, 0.0) * 21.0
     );
 
     finalColor += mix(
@@ -963,27 +864,21 @@ const FRAG = /* glsl */ `
       violet,
       0.55
     ) * sphereGlow * (
-      0.09
-      + 0.12 * uAmp
-      + 0.06 * bandSoft
+      0.08
+      + 0.10 * uAmp
+      + 0.05 * bandSoft
     ) * (
       1.0 - sphereMask
     );
 
-    /*
-     * Дополнительное фиолетово-розовое
-     * свечение вокруг самого ядра.
-     */
-
     float sphereOuterGlow = exp(
-      -max(sphereDistance, 0.0)
-      * 10.5
+      -max(sphereDistance, 0.0) * 10.8
     );
 
     sphereOuterGlow *=
       1.0 - smoothstep(
         sphereRadius + 0.02,
-        sphereRadius + 0.19,
+        sphereRadius + 0.18,
         radius
       );
 
@@ -992,9 +887,9 @@ const FRAG = /* glsl */ `
       neonMagenta,
       0.38
     ) * sphereOuterGlow * (
-      0.030
-      + uAmp * 0.065
-      + uActivity * 0.018
+      0.024
+      + uAmp * 0.050
+      + uActivity * 0.015
     ) * (
       1.0 - sphereMask
     );
@@ -1043,32 +938,24 @@ export class Visualizer {
             uRes: {
                 value: new THREE.Vector2(1, 1),
             },
-
             uTime: {
                 value: 0,
             },
-
             uWaveTime: {
                 value: 0,
             },
-
             uAmp: {
                 value: 0,
             },
-
             uActivity: {
                 value: 0.15,
             },
-
             uBands: {
                 value: this.bands,
             },
         };
 
-        const geometry = new THREE.PlaneGeometry(
-            2,
-            2
-        );
+        const geometry = new THREE.PlaneGeometry(2, 2);
 
         const material = new THREE.ShaderMaterial({
             uniforms: this.uniforms,
@@ -1091,7 +978,6 @@ export class Visualizer {
         );
 
         this.clock = new THREE.Clock();
-
         this._loop();
     }
 
@@ -1125,10 +1011,7 @@ export class Visualizer {
         for (let i = 0; i < 8; i++) {
             this.bandTargets[i] = Math.min(
                 1,
-                Math.max(
-                    0,
-                    bands[i] ?? 0
-                )
+                Math.max(0, bands[i] ?? 0)
             );
         }
     }
@@ -1143,19 +1026,12 @@ export class Visualizer {
     }
 
     _loop() {
-        requestAnimationFrame(
-            () => this._loop()
-        );
+        requestAnimationFrame(() => this._loop());
 
         const dt = Math.min(
             this.clock.getDelta(),
             0.05
         );
-
-        /*
-         * Быстрая атака аудио,
-         * более мягкое затухание.
-         */
 
         const ampRate =
             this.ampTarget > this.amp
@@ -1169,9 +1045,7 @@ export class Visualizer {
             this.ampTarget - this.amp
         ) * ampBlend;
 
-        this.ampTarget *= Math.exp(
-            -10.5 * dt
-        );
+        this.ampTarget *= Math.exp(-10.5 * dt);
 
         let bandEnergy = 0;
 
@@ -1185,23 +1059,14 @@ export class Visualizer {
                 1.0 - Math.exp(-bandRate * dt);
 
             this.bands[i] += (
-                this.bandTargets[i]
-                - this.bands[i]
+                this.bandTargets[i] - this.bands[i]
             ) * bandBlend;
 
-            this.bandTargets[i] *= Math.exp(
-                -11.0 * dt
-            );
-
+            this.bandTargets[i] *= Math.exp(-11.0 * dt);
             bandEnergy += this.bands[i];
         }
 
         bandEnergy /= 8.0;
-
-        /*
-         * Чем громче речь, тем быстрее
-         * волны расходятся наружу.
-         */
 
         const waveSpeed =
             3.2
