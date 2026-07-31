@@ -7,7 +7,6 @@ const $ = (s) => document.querySelector(s);
 const idleVideo = $("#idle-video");
 const idleCanvas = $("#idle-canvas");
 const sceneCanvas = $("#scene");
-const caption = $("#caption");
 const statusEl = $("#status");
 const startBtn = $("#start-btn");
 
@@ -41,7 +40,6 @@ function showIdle() {
     idleCanvas.classList.remove("hidden");
     jelly?.start();
   }
-  caption.classList.remove("show");
   statusEl.textContent = wakeRec ? "скажите «Оливия», чтобы начать" : STATUS_TEXT.idle;
 }
 
@@ -50,11 +48,6 @@ function showActive() {
   idleVideo.classList.add("hidden");
   idleCanvas.classList.add("hidden");
   jelly?.stop();
-}
-
-function setCaption(text) {
-  caption.textContent = text;
-  caption.classList.add("show");
 }
 
 // ── Таймер «10 секунд молчания» ─────────────────────────────────────
@@ -168,7 +161,7 @@ function handleServer(msg) {
       // реплика пациента — можно не показывать, но полезно при отладке
       break;
     case "reply":
-      setCaption(msg.text);
+      // субтитры отключены: во время разговора показываем только медуз/шар
       break;
     case "speak_end":
       break;

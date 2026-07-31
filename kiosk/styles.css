@@ -33,14 +33,6 @@ body.in-dialog { cursor: none; }
   padding: 0 8vw 9vh; pointer-events: none;
   text-align: center;
 }
-#caption {
-  font-size: clamp(20px, 3.2vw, 46px);
-  font-weight: 500; line-height: 1.35;
-  text-shadow: 0 2px 30px rgba(123,63,242,.6);
-  max-width: 90%;
-  opacity: 0; transition: opacity .4s ease;
-}
-#caption.show { opacity: 1; }
 #status {
   margin-top: 2vh;
   font-size: clamp(12px, 1.2vw, 18px);

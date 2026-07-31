@@ -43,6 +43,7 @@ from .providers import build_providers
 app = FastAPI(title="Dental AI — Server")
 
 KIOSK_DIR = Path(__file__).resolve().parents[2] / "kiosk"
+IDLE_VIDEO_DIR = Path(__file__).resolve().parents[2] / "assets" / "videos"
 
 
 @app.middleware("http")
@@ -242,7 +243,13 @@ async def ws_endpoint(ws: WebSocket):
         convlog.end("disconnect")
 
 
-# Раздаём статику киоска последней (чтобы /ws и /health имели приоритет)
+# Видео-заставка (медузы) лежит в assets/videos/ (вне kiosk/, чтобы не
+# коммитить тяжёлый файл вместе с фронтендом) — отдаём его по тому же
+# пути /assets/jellyfish.mp4, который запрашивает kiosk/app.js
+if IDLE_VIDEO_DIR.exists():
+    app.mount("/assets", StaticFiles(directory=str(IDLE_VIDEO_DIR)), name="idle-video")
+
+# Раздаём статику киоска последней (чтобы /ws, /health и /assets имели приоритет)
 if KIOSK_DIR.exists():
     @app.get("/")
     async def index():
