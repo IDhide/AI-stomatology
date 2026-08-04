@@ -68,6 +68,14 @@ class Settings(BaseSettings):
     # Папка с логами разговоров (создаётся при первом запуске)
     conversations_dir: str = Field(default="data/conversations", alias="CONVERSATIONS_DIR")
 
+    # ── Телеграм (сводка заявок на запись администратору) ────────────
+    telegram_bot_token: str = Field(default="", alias="TELEGRAM_BOT_TOKEN")
+    telegram_chat_id: str = Field(default="", alias="TELEGRAM_CHAT_ID")
+    # Во сколько присылать сводку за день (локальное время сервера, ЧЧ:ММ)
+    telegram_digest_time: str = Field(default="21:00", alias="TELEGRAM_DIGEST_TIME")
+    # Папка с заявками на запись (создаётся при первом запуске)
+    bookings_dir: str = Field(default="data/bookings", alias="BOOKINGS_DIR")
+
     @property
     def has_grok(self) -> bool:
         return bool(self.xai_api_key)
@@ -79,6 +87,10 @@ class Settings(BaseSettings):
     @property
     def has_supabase(self) -> bool:
         return bool(self.supabase_url and self.supabase_key)
+
+    @property
+    def has_telegram(self) -> bool:
+        return bool(self.telegram_bot_token and self.telegram_chat_id)
 
 
 @lru_cache

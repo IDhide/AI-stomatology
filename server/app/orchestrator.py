@@ -17,6 +17,7 @@ from collections.abc import AsyncIterator, Awaitable, Callable
 
 from loguru import logger
 
+from .booking_store import BookingRequest
 from .persona import Persona
 from .providers.base import LLMProvider, STTProvider, TTSProvider
 
@@ -27,6 +28,17 @@ _SENTENCE_END = re.compile(r"([.!?…]+)(\s+|$)")
 # Пациент прощается — чтобы завершить диалог локально, даже если LLM лежит
 _FAREWELL_RE = re.compile(
     r"\b(до свидания|до встречи|всего доброго|всего хорошего|пока|прощайте)\b",
+    re.IGNORECASE,
+)
+
+# Служебная метка заявки на запись (см. промпт, раздел «Заявка на запись»).
+# Однострочная, без точек/запятых внутри — не режется на предложения
+# для TTS так же, как [КОНЕЦ], и не произносится вслух.
+_BOOKING_RE = re.compile(
+    r"\[ЗАЯВКА:\s*Имя\s*=\s*(?P<name>[^;\]]*)\s*;\s*"
+    r"Телефон\s*=\s*(?P<phone>[^;\]]*)\s*;\s*"
+    r"Время\s*=\s*(?P<time>[^;\]]*?)\s*"
+    r"(?:;\s*Что\s*=\s*(?P<note>[^;\]]*?)\s*)?\]",
     re.IGNORECASE,
 )
 
@@ -52,6 +64,7 @@ class Conversation:
         self._greeted = False
         self._extra_context = ""
         self.ended = False  # LLM поставил метку [КОНЕЦ] — диалог завершён
+        self._booking: BookingRequest | None = None  # LLM поставил метку [ЗАЯВКА: ...]
 
     def set_context(self, text: str) -> None:
         """Дополнительный блок для system-промпта (например, записи DIKIDI)."""
@@ -61,6 +74,7 @@ class Conversation:
     async def greet(self, sink: AudioSink, *, name: str | None = None) -> str:
         """Первая инициатива системы — приветствие (из ТЗ)."""
         self.ended = False
+        self._booking = None
         text = self.persona.greeting(returning=self._greeted, name=name)
         self._greeted = True
         await self._speak(text, sink)
@@ -83,7 +97,8 @@ class Conversation:
                         "тёплой фразой по итогам разговора, без вопросов.]"},
                 ]
                 parts = [p async for p in self.llm.stream(messages)]
-                text = self._strip_end_marker("".join(parts))[0].strip()
+                text = self._strip_end_marker("".join(parts))[0]
+                text = self._extract_booking(text).strip()
             except Exception:
                 logger.warning("LLM недоступен для прощания — шаблон")
         if not text:
@@ -98,6 +113,31 @@ class Conversation:
         if self._END_MARKER.search(text):
             return self._END_MARKER.sub(" ", text).strip(), True
         return text, False
+
+    def _extract_booking(self, text: str) -> str:
+        """
+        Вырезает служебную метку [ЗАЯВКА: ...] (не произносится, не
+        показывается) и сохраняет данные заявки. Если за разговор метка
+        встретилась несколько раз (пациент поправил номер/время) —
+        побеждает последняя, take_booking() отдаёт актуальную версию.
+        """
+        m = _BOOKING_RE.search(text)
+        if not m:
+            return text
+        self._booking = BookingRequest(
+            name=(m.group("name") or "").strip(),
+            phone_raw=(m.group("phone") or "").strip(),
+            preferred_time=(m.group("time") or "").strip(),
+            note=(m.group("note") or "").strip(),
+        )
+        return _BOOKING_RE.sub(" ", text).strip()
+
+    def take_booking(self) -> BookingRequest | None:
+        """Забирает и очищает собранную заявку — вызывается один раз на
+        каждую из возможных точек завершения сессии, чтобы не сохранить
+        одну и ту же заявку дважды."""
+        booking, self._booking = self._booking, None
+        return booking
 
     async def handle_utterance(
         self,
@@ -129,6 +169,7 @@ class Conversation:
                 sentence, is_end = self._strip_end_marker(sentence)
                 if is_end:
                     self.ended = True
+                sentence = self._extract_booking(sentence)
                 if not sentence:
                     continue
                 reply_parts.append(sentence)

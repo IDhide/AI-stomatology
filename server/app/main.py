@@ -19,6 +19,7 @@ FastAPI backend: WebSocket-мост между киоском и стримин�
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import sys
 from pathlib import Path
@@ -33,17 +34,33 @@ from loguru import logger
 logger.remove()
 logger.add(sys.stderr, level="DEBUG", backtrace=False, diagnose=False)
 
+from .booking_store import BookingStore
 from .config import get_settings
 from .conversation_log import ConversationLog
 from .dikidi_readonly import DikidiReadOnly
 from .orchestrator import Conversation
 from .persona import Persona
 from .providers import build_providers
+from .telegram_notify import TelegramNotifier
 
 app = FastAPI(title="Dental AI — Server")
 
 KIOSK_DIR = Path(__file__).resolve().parents[2] / "kiosk"
 IDLE_VIDEO_DIR = Path(__file__).resolve().parents[2] / "assets" / "videos"
+
+_settings = get_settings()
+booking_store = BookingStore(_settings.bookings_dir)
+telegram = TelegramNotifier(_settings.telegram_bot_token, _settings.telegram_chat_id, booking_store)
+
+
+@app.on_event("startup")
+async def _start_telegram_background_tasks() -> None:
+    if not telegram.enabled:
+        logger.info("Telegram: TELEGRAM_BOT_TOKEN/TELEGRAM_CHAT_ID не заданы — сводки отключены")
+        return
+    asyncio.create_task(telegram.run_updates_loop())
+    asyncio.create_task(telegram.run_daily_digest_loop(_settings.telegram_digest_time))
+    logger.info(f"Telegram: сводка заявок будет приходить в {_settings.telegram_digest_time}")
 
 
 @app.middleware("http")
@@ -65,6 +82,7 @@ async def health():
         "llm_model": cfg.grok_model if cfg.has_grok else None,
         "stt": cfg.stt_provider if cfg.has_elevenlabs else "mock",
         "tts": cfg.tts_provider if (cfg.has_elevenlabs and cfg.tts_voice_id) else "mock",
+        "telegram": "on" if cfg.has_telegram else "off",
     }
 
 
@@ -180,6 +198,9 @@ async def ws_endpoint(ws: WebSocket):
                         await speak(_farewell)
                         if farewell_holder:
                             convlog.log("assistant", farewell_holder[0])
+                        booking = conv.take_booking()
+                        if booking:
+                            booking_store.add(booking)
                         convlog.end("patient_left")
                 except Exception:
                     logger.exception("Ошибка при приветствии/прощании")
@@ -232,6 +253,9 @@ async def ws_endpoint(ws: WebSocket):
                     # LLM поставил метку [КОНЕЦ]: диалог завершён,
                     # киоск возвращается к медузам без повторного прощания
                     logger.info("Диалог завершён — возврат в режим ожидания")
+                    booking = conv.take_booking()
+                    if booking:
+                        booking_store.add(booking)
                     convlog.end("assistant_closed")
                     await ws.send_json({"type": "conversation_end"})
                 await send_state("idle")
@@ -239,7 +263,10 @@ async def ws_endpoint(ws: WebSocket):
     except WebSocketDisconnect:
         logger.info("Киоск отключён")
     finally:
-        # не теряем расшифровку, если связь оборвалась посреди разговора
+        # не теряем заявку и расшифровку, если связь оборвалась посреди разговора
+        booking = conv.take_booking()
+        if booking:
+            booking_store.add(booking)
         convlog.end("disconnect")
 
 
