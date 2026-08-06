@@ -42,6 +42,8 @@ from .orchestrator import Conversation
 from .persona import Persona
 from .providers import build_providers
 from .telegram_notify import TelegramNotifier
+from .voice_id.embedder import VoiceEmbedder
+from .voice_id.store import VoiceMemoryStore
 
 app = FastAPI(title="Dental AI — Server")
 
@@ -51,6 +53,17 @@ IDLE_VIDEO_DIR = Path(__file__).resolve().parents[2] / "assets" / "videos"
 _settings = get_settings()
 booking_store = BookingStore(_settings.bookings_dir)
 telegram = TelegramNotifier(_settings.telegram_bot_token, _settings.telegram_chat_id, booking_store)
+
+# Узнавание по голосу — выключено по умолчанию (см. VOICE_ID_ENABLED); модель
+# грузим один раз при старте процесса, не на каждое WS-подключение.
+voice_embedder = VoiceEmbedder() if _settings.voice_id_enabled else None
+voice_memory = VoiceMemoryStore(_settings.voice_memory_path) if _settings.voice_id_enabled else None
+if _settings.voice_id_enabled:
+    if voice_embedder and voice_embedder.enabled:
+        mode = "теневой режим (не влияет на диалог)" if _settings.voice_id_shadow_mode else "активно"
+        logger.info(f"Голос: узнавание включено, {mode}, порог={_settings.voice_match_threshold}")
+    else:
+        logger.warning("VOICE_ID_ENABLED=true, но resemblyzer не установлен — узнавание по голосу не работает")
 
 
 @app.on_event("startup")
@@ -138,6 +151,13 @@ async def ws_endpoint(ws: WebSocket):
     audio_buf = bytearray()
     recording = False
 
+    # ── Узнавание по голосу: состояние на одну сессию (один визит) ─────
+    dikidi_context = ""
+    voice_sample_buf = bytearray()
+    voice_match_attempted = False
+    voice_matched_id: int | None = None
+    voice_embedding: list[float] | None = None
+
     async def send_state(value: str):
         await ws.send_json({"type": "state", "value": value})
 
@@ -149,6 +169,21 @@ async def ws_endpoint(ws: WebSocket):
         await coro_factory()
         await ws.send_json({"type": "speak_end"})
         await send_state("idle")
+
+    def finalize_voice(booking) -> None:
+        """
+        Вызывается на всех точках завершения сессии. Если голос за визит
+        совпал с уже известным — просто отмечаем «видели». Если не
+        совпал, но за сессию собрана заявка с именем (см. booking_store) —
+        заводим новый голосовой отпечаток. Без имени отпечаток не имеет
+        смысла сохранять — представиться в следующий раз всё равно нечем.
+        """
+        if not (cfg.voice_id_enabled and voice_embedder and voice_embedder.enabled):
+            return
+        if voice_matched_id is not None:
+            voice_memory.touch_seen(voice_matched_id)
+        elif voice_embedding and booking and booking.name:
+            voice_memory.enroll(voice_embedding, booking.name, booking.phone)
 
     logger.info("Киоск подключён")
     try:
@@ -180,11 +215,16 @@ async def ws_endpoint(ws: WebSocket):
                 try:
                     if data.get("present"):
                         convlog.start()
+                        # новый визит — сбрасываем состояние узнавания по голосу
+                        # предыдущего пациента (WS-соединение живёт весь день)
+                        voice_sample_buf.clear()
+                        voice_match_attempted = False
+                        voice_matched_id = None
+                        voice_embedding = None
                         # свежие записи на сегодня → в контекст Оливии (read-only)
                         bookings = await dikidi.today_bookings()
-                        conv.set_context(
-                            DikidiReadOnly.format_for_prompt(bookings, dikidi.available)
-                        )
+                        dikidi_context = DikidiReadOnly.format_for_prompt(bookings, dikidi.available)
+                        conv.set_context(dikidi_context)
                         greeting_holder: list[str] = []
                         async def _greet():
                             greeting_holder.append(await conv.greet(audio_sink))
@@ -201,6 +241,7 @@ async def ws_endpoint(ws: WebSocket):
                         booking = conv.take_booking()
                         if booking:
                             booking_store.add(booking)
+                        finalize_voice(booking)
                         convlog.end("patient_left")
                 except Exception:
                     logger.exception("Ошибка при приветствии/прощании")
@@ -224,6 +265,39 @@ async def ws_endpoint(ws: WebSocket):
                 audio = bytes(audio_buf)
                 audio_buf.clear()
                 await send_state("thinking")
+
+                # Узнавание по голосу: копим речь пациента и пробуем узнать один
+                # раз за визит, как только накопилось достаточно (короткие фразы
+                # дают слишком шумный отпечаток — см. план/README).
+                if (
+                    cfg.voice_id_enabled
+                    and voice_embedder
+                    and voice_embedder.enabled
+                    and not voice_match_attempted
+                ):
+                    voice_sample_buf.extend(audio)
+                    sample_seconds = len(voice_sample_buf) / 2 / 16000
+                    if sample_seconds >= cfg.voice_min_sample_seconds:
+                        voice_match_attempted = True
+                        voice_embedding = voice_embedder.embed(bytes(voice_sample_buf))
+                        if voice_embedding:
+                            match = voice_memory.match(
+                                voice_embedding,
+                                cfg.voice_match_threshold,
+                                weak_threshold=cfg.voice_match_weak_threshold,
+                            )
+                            logger.info(
+                                f"🎙️ Голос: distance={match.distance:.3f} "
+                                f"is_new={match.is_new} shadow={cfg.voice_id_shadow_mode}"
+                            )
+                            if not match.is_new:
+                                voice_matched_id = match.patient_id
+                                conv.set_voice_match(match)
+                                if not cfg.voice_id_shadow_mode:
+                                    voice_line = VoiceMemoryStore.format_for_prompt(match)
+                                    conv.set_context(
+                                        "\n\n".join(p for p in (dikidi_context, voice_line) if p)
+                                    )
 
                 async def on_transcript(t: str):
                     convlog.log("user", t)
@@ -256,6 +330,7 @@ async def ws_endpoint(ws: WebSocket):
                     booking = conv.take_booking()
                     if booking:
                         booking_store.add(booking)
+                    finalize_voice(booking)
                     convlog.end("assistant_closed")
                     await ws.send_json({"type": "conversation_end"})
                 await send_state("idle")
@@ -267,6 +342,7 @@ async def ws_endpoint(ws: WebSocket):
         booking = conv.take_booking()
         if booking:
             booking_store.add(booking)
+        finalize_voice(booking)
         convlog.end("disconnect")
 
 

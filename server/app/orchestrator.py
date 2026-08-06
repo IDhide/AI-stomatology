@@ -20,6 +20,7 @@ from loguru import logger
 from .booking_store import BookingRequest
 from .persona import Persona
 from .providers.base import LLMProvider, STTProvider, TTSProvider
+from .voice_id.store import VoiceMatch
 
 # Конец предложения: точка/!/?/… + пробел. Нарезаем, чтобы отдавать в TTS
 # по фразам, а не по словам (иначе просодия рвётся).
@@ -65,10 +66,17 @@ class Conversation:
         self._extra_context = ""
         self.ended = False  # LLM поставил метку [КОНЕЦ] — диалог завершён
         self._booking: BookingRequest | None = None  # LLM поставил метку [ЗАЯВКА: ...]
+        self._voice_match: VoiceMatch | None = None
+        self._voice_match_used = False
 
     def set_context(self, text: str) -> None:
         """Дополнительный блок для system-промпта (например, записи DIKIDI)."""
         self._extra_context = text.strip()
+
+    def set_voice_match(self, match: VoiceMatch | None) -> None:
+        """Сохраняет распознанного по голосу пациента для персонализации."""
+        self._voice_match = match
+        self._voice_match_used = False
 
     # ── публичные точки входа ────────────────────────────────────────
     async def greet(self, sink: AudioSink, *, name: str | None = None) -> str:
@@ -211,6 +219,7 @@ class Conversation:
             system = f"{system}\n\n{self._extra_context}"
         messages = [{"role": "system", "content": system}, *self.history]
         buffer = ""
+        greeting_injected = False
         async for piece in self.llm.stream(messages):
             buffer += piece
             while True:
@@ -220,11 +229,33 @@ class Conversation:
                 cut = m.end()
                 sentence = buffer[:cut].strip()
                 buffer = buffer[cut:]
-                if sentence:
-                    yield sentence
+                if not sentence:
+                    continue
+                if not greeting_injected:
+                    sentence = self._maybe_prepend_voice_greeting(sentence)
+                    greeting_injected = True
+                yield sentence
         tail = buffer.strip()
         if tail:
+            if not greeting_injected:
+                tail = self._maybe_prepend_voice_greeting(tail)
             yield tail
+
+    def _maybe_prepend_voice_greeting(self, sentence: str) -> str:
+        """Вставляет персональное приветствие при высокой уверенности распознавания."""
+        if self._voice_match_used:
+            return sentence
+        match = self._voice_match
+        self._voice_match_used = True
+        if not match or match.is_new or not match.name:
+            return sentence
+        if match.confidence != "high":
+            return sentence
+        greeting = f"Приятно вас снова видеть, {match.name}!"
+        # не дублируем, если LLM уже сама начала с такой фразы
+        if sentence.startswith(greeting):
+            return sentence
+        return f"{greeting} {sentence[0].lower()}{sentence[1:]}" if sentence else greeting
 
     async def _speak(self, text: str, sink: AudioSink) -> None:
         # Ошибка синтеза не должна убивать разговор: текст уже ушёл на экран

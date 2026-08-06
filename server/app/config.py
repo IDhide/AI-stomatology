@@ -76,6 +76,28 @@ class Settings(BaseSettings):
     # Папка с заявками на запись (создаётся при первом запуске)
     bookings_dir: str = Field(default="data/bookings", alias="BOOKINGS_DIR")
 
+    # ── Узнавание пациента по голосу (без Supabase, локальный sqlite) ──
+    # Выключено по умолчанию: биометрия голоса — не то, что должно
+    # включаться сюрпризом при обновлении. Включать осознанно.
+    voice_id_enabled: bool = Field(default=False, alias="VOICE_ID_ENABLED")
+    # «Теневой режим»: считаем эмбеддинги и логируем совпадения, но НЕ
+    # подмешиваем это в промпт Оливии. Нужен, чтобы набрать статистику
+    # реальных дистанций «свой/чужой» и откалибровать порог, прежде чем
+    # это увидят пациенты. См. план — порог наугад не подобрать.
+    voice_id_shadow_mode: bool = Field(default=True, alias="VOICE_ID_SHADOW_MODE")
+    # Порог косинусной дистанции (0 — идентично, 2 — противоположно).
+    # 0.15 означает 85% сходство голосов — при таком совпадении Оливия
+    # уверенно встречает пациента по имени. Более строгий порог снижает
+    # ложные срабатывания на похожие голоса.
+    voice_match_threshold: float = Field(default=0.15, alias="VOICE_MATCH_THRESHOLD")
+    # Мягкий порог: 0.25 означает 75% сходство. При совпадении от 75% до 85%
+    # Оливия НЕ утверждает личность, а мягко переспрашивает имя.
+    voice_match_weak_threshold: float = Field(default=0.25, alias="VOICE_MATCH_WEAK_THRESHOLD")
+    # Сколько секунд речи пациента копить, прежде чем пробовать узнать —
+    # на одном слове голосовой отпечаток слишком шумный
+    voice_min_sample_seconds: float = Field(default=2.5, alias="VOICE_MIN_SAMPLE_SECONDS")
+    voice_memory_path: str = Field(default="data/voice_memory.sqlite3", alias="VOICE_MEMORY_PATH")
+
     @property
     def has_grok(self) -> bool:
         return bool(self.xai_api_key)
