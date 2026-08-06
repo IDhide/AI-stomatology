@@ -77,11 +77,15 @@ async def _start_telegram_background_tasks() -> None:
 
 
 @app.middleware("http")
-async def no_cache_static(request, call_next):
-    """Киоск-страница и её JS/CSS не должны залипать в кэше браузера."""
+async def cache_control_static(request, call_next):
+    """Киоск-страница и её JS/CSS не должны залипать в кэше браузера,
+    а тяжёлые видео-файлы — наоборот, кэшируем, чтобы не грузились заново."""
     resp = await call_next(request)
-    if request.url.path == "/" or request.url.path.endswith((".js", ".css", ".html")):
+    path = request.url.path
+    if path == "/" or path.endswith((".js", ".css", ".html")):
         resp.headers["Cache-Control"] = "no-cache"
+    elif path.startswith("/assets/") and path.endswith((".mp4", ".webm", ".ogg")):
+        resp.headers["Cache-Control"] = "public, max-age=3600"
     return resp
 
 
