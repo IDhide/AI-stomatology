@@ -3,12 +3,22 @@
 const TARGET_SR = 16000;
 
 // ── Понижающая передискретизация Float32 → 16 kHz ────────────────────
+// Берём среднее по блоку исходных сэмплов (примитивный НЧ-фильтр), а не
+// каждый N-й сэмпл: decimation без сглаживания заворачивает высокие частоты
+// в полосу (алиасинг) — речь остаётся разборчивой, но голосовой отпечаток
+// resemblyzer портится настолько, что человек не совпадает сам с собой.
 function downsample(input, inRate, outRate = TARGET_SR) {
   if (inRate === outRate) return input;
   const ratio = inRate / outRate;
   const outLen = Math.round(input.length / ratio);
   const out = new Float32Array(outLen);
-  for (let i = 0; i < outLen; i++) out[i] = input[Math.floor(i * ratio)];
+  for (let i = 0; i < outLen; i++) {
+    const from = Math.floor(i * ratio);
+    const to = Math.min(input.length, Math.floor((i + 1) * ratio));
+    let sum = 0;
+    for (let j = from; j < to; j++) sum += input[j];
+    out[i] = to > from ? sum / (to - from) : input[from];
+  }
   return out;
 }
 
