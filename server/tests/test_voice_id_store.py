@@ -163,3 +163,30 @@ def test_format_for_prompt_without_phone_omits_phone_line():
 def test_similarity_property():
     match = VoiceMatch(patient_id=1, name="Мария", phone=None, distance=0.25, is_new=False)
     assert match.similarity == pytest.approx(0.75)
+
+
+def test_update_embedding_shifts_vector_toward_new(tmp_path):
+    # 0° и 30°: среднее должно лежать между ними, норма — единичная
+    store = VoiceMemoryStore(str(tmp_path / "voice.sqlite3"))
+    patient_id = store.enroll(_unit_vector(0), name="Мария")
+
+    store.update_embedding(patient_id, _unit_vector(30), new_weight=0.5)
+
+    match = store.match(_unit_vector(15), threshold=0.25)
+    assert match.is_new is False
+    assert match.distance < 1.0 - math.cos(math.radians(16))  # ближе к 15°, чем к 16°
+    with store._connect() as conn:
+        raw = conn.execute(
+            "select embedding_json from voice_patients where id = ?", (patient_id,)
+        ).fetchone()[0]
+    import json
+
+    vec = json.loads(raw)
+    norm = math.sqrt(sum(x * x for x in vec))
+    assert norm == pytest.approx(1.0, abs=1e-5)
+
+
+def test_update_embedding_missing_patient_is_noop(tmp_path):
+    store = VoiceMemoryStore(str(tmp_path / "voice.sqlite3"))
+    # не должно падать на несуществующем id
+    store.update_embedding(999, _unit_vector(10))

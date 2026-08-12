@@ -149,8 +149,7 @@ async def ws_endpoint(ws: WebSocket):
         company_id=cfg.dikidi_company_id,
         base_url=cfg.dikidi_base_url,
         demo=cfg.dikidi_demo,
-    )
-    convlog = ConversationLog(cfg.conversations_dir)
+    )    convlog = ConversationLog(cfg.conversations_dir)
 
     audio_buf = bytearray()
     recording = False
@@ -225,9 +224,12 @@ async def ws_endpoint(ws: WebSocket):
                         voice_match_attempted = False
                         voice_matched_id = None
                         voice_embedding = None
-                        # свежие записи на сегодня → в контекст Оливии (read-only)
+                        # свежие записи на сегодня + свободные окна → в контекст Оливии (read-only)
                         bookings = await dikidi.today_bookings()
-                        dikidi_context = DikidiReadOnly.format_for_prompt(bookings, dikidi.available)
+                        free = await dikidi.free_slots(days=cfg.dikidi_days_ahead)
+                        dikidi_context = DikidiReadOnly.format_for_prompt(
+                            bookings, dikidi.available, free_slots=free
+                        )
                         conv.set_context(dikidi_context)
                         greeting_holder: list[str] = []
                         async def _greet():
@@ -281,10 +283,17 @@ async def ws_endpoint(ws: WebSocket):
                 ):
                     voice_sample_buf.extend(audio)
                     sample_seconds = len(voice_sample_buf) / 2 / 16000
-                    if sample_seconds >= cfg.voice_min_sample_seconds:
+                    # буфер не раздуваем бесконечно: если за 30с накопленного
+                    # аудио чистой речи так и не набралось — сдаёмся на этот визит
+                    if sample_seconds >= 30:
                         voice_match_attempted = True
+                        logger.info("🎙️ Голос: 30с аудио без достаточной речи — пропускаю узнавание")
+                    elif sample_seconds >= cfg.voice_min_sample_seconds:
                         voice_embedding = voice_embedder.embed(bytes(voice_sample_buf))
+                        # embed() вернул None — чистой речи мало: НЕ считаем
+                        # попытку состоявшейся, копим дальше
                         if voice_embedding:
+                            voice_match_attempted = True
                             match = voice_memory.match(
                                 voice_embedding,
                                 cfg.voice_match_threshold,
@@ -294,14 +303,18 @@ async def ws_endpoint(ws: WebSocket):
                                 f"🎙️ Голос: distance={match.distance:.3f} "
                                 f"is_new={match.is_new} shadow={cfg.voice_id_shadow_mode}"
                             )
-                            if not match.is_new:
+                            if not match.is_new and not cfg.voice_id_shadow_mode:
                                 voice_matched_id = match.patient_id
                                 conv.set_voice_match(match)
-                                if not cfg.voice_id_shadow_mode:
-                                    voice_line = VoiceMemoryStore.format_for_prompt(match)
-                                    conv.set_context(
-                                        "\n\n".join(p for p in (dikidi_context, voice_line) if p)
-                                    )
+                                voice_line = VoiceMemoryStore.format_for_prompt(match)
+                                conv.set_context(
+                                    "\n\n".join(p for p in (dikidi_context, voice_line) if p)
+                                )
+                                # Уверенное совпадение — подмешиваем свежий отпечаток
+                                # в сохранённый: голос/микрофон «плывут» со временем,
+                                # так база сама адаптируется к киоску
+                                if match.confidence == "high":
+                                    voice_memory.update_embedding(match.patient_id, voice_embedding)
 
                 async def on_transcript(t: str):
                     convlog.log("user", t)

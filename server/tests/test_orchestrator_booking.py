@@ -160,3 +160,34 @@ async def test_farewell_never_speaks_the_booking_marker_aloud():
     booking = conv.take_booking()
     assert booking is not None
     assert booking.name == "Мария"
+
+
+class _FakeLLMWithDottedMarker:
+    """Метка заявки с точкой внутри («Время=13:00 13. 08»): раньше нарезка
+    на предложения рвала метку посередине, и её хвост улетал в TTS."""
+
+    REPLY = (
+        "Спасибо, Олег. Передала вашу заявку администратору. "
+        "[ЗАЯВКА: Имя=Олег; Телефон=89215551234; Время=13:00 13. 08]"
+    )
+
+    async def stream(self, messages, *, tools=None):
+        for word in self.REPLY.split():
+            yield word + " "
+
+
+@pytest.mark.asyncio
+async def test_booking_marker_with_dot_inside_is_not_split_or_spoken():
+    conv = _conv(llm=_FakeLLMWithDottedMarker())
+    conv.history.append({"role": "user", "content": "Запишите меня"})
+
+    sentences = [s async for s in conv._llm_sentences()]
+
+    assert sentences, "должны остаться обычные предложения"
+    assert all("ЗАЯВКА" not in s for s in sentences)
+    assert all("13. 08]" not in s for s in sentences)
+
+    booking = conv.take_booking()
+    assert booking is not None
+    assert booking.name == "Олег"
+    assert "13:00" in booking.preferred_time

@@ -47,8 +47,14 @@ class ElevenLabsTTS(TTSProvider):
             "model_id": self.model,
             "language_code": "ru",
             "voice_settings": {
-                "stability": 0.4,
+                # Голосовой киоск: тембр и интонация должны быть РОВНЫМИ от
+                # фразы к фразе (сдержанный администратор). Низкая stability
+                # (0.3–0.5) даёт «выразительность» ценой скачков тембра —
+                # каждая фраза звучит как другой человек.
+                "stability": 0.9,
                 "similarity_boost": 0.75,
+                "style": 0.0,          # без актёрских интонаций
+                "use_speaker_boost": True,
                 "speed": 1.0,
             },
         }

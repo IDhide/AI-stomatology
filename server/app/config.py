@@ -33,7 +33,7 @@ class Settings(BaseSettings):
     grok_base_url: str = Field(default="https://api.x.ai/v1", alias="GROK_BASE_URL")
     # Для голоса нужна БЫСТРАЯ модель без reasoning: grok-4 «думает» перед
     # ответом десятки секунд — пациент столько ждать не будет
-    grok_model: str = Field(default="grok-4-1-fast-non-reasoning", alias="GROK_MODEL")
+    grok_model: str = Field(default="grok-4.20-0309-non-reasoning", alias="GROK_MODEL")
     llm_temperature: float = Field(default=0.4, alias="LLM_TEMPERATURE")
     llm_max_tokens: int = Field(default=400, alias="LLM_MAX_TOKENS")
 
@@ -51,6 +51,8 @@ class Settings(BaseSettings):
     dikidi_base_url: str = Field(default="https://api.dikidi.net", alias="DIKIDI_BASE_URL")
     # true — подмешивать демо-записи, когда DIKIDI не подключён (только для теста!)
     dikidi_demo: bool = Field(default=False, alias="DIKIDI_DEMO")
+    # На сколько дней вперёд показывать Оливии свободные окна для записи
+    dikidi_days_ahead: int = Field(default=2, alias="DIKIDI_DAYS_AHEAD")
 
     # ── Supabase (память + pgvector для лиц) ────────────────────────
     supabase_url: str = Field(default="", alias="SUPABASE_URL")

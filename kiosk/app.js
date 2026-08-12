@@ -22,7 +22,8 @@ let sessionActive = false;
 let serverState = "idle";
 let videoOk = false;
 let silenceTimer = null;
-const SILENCE_END_MS = 10000; // из ТЗ: 10 секунд молчания → конец разговора
+const SILENCE_END_MS = 15000; // тишины перед концом разговора (10с из ТЗ
+                              // обрывало диалог, если пациент просто думал)
 
 // ── Своё видео с медузами приоритетнее canvas-сцены (если файл есть) ─
 idleVideo.src = "/assets/jellyfish.mp4";

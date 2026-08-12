@@ -26,9 +26,10 @@ from .voice_id.store import VoiceMatch
 # по фразам, а не по словам (иначе просодия рвётся).
 _SENTENCE_END = re.compile(r"([.!?…]+)(\s+|$)")
 
-# Пациент прощается — чтобы завершить диалог локально, даже если LLM лежит
+# Пациент прощается — чтобы завершить диалог локально, даже если LLM лежит.
+# Голое «пока» не считаем прощанием: «я пока подумаю» — это не «пока-пока».
 _FAREWELL_RE = re.compile(
-    r"\b(до свидания|до встречи|всего доброго|всего хорошего|пока|прощайте)\b",
+    r"\b(до свидания|до встречи|всего доброго|всего хорошего|пока-пока|прощайте)\b",
     re.IGNORECASE,
 )
 
@@ -68,6 +69,7 @@ class Conversation:
         self._booking: BookingRequest | None = None  # LLM поставил метку [ЗАЯВКА: ...]
         self._voice_match: VoiceMatch | None = None
         self._voice_match_used = False
+        self._empty_streak = 0  # сколько раз подряд STT вернул пусто
 
     def set_context(self, text: str) -> None:
         """Дополнительный блок для system-промпта (например, записи DIKIDI)."""
@@ -162,8 +164,24 @@ class Conversation:
         """
         user_text = await self.stt.transcribe(audio)
         if not user_text:
-            logger.debug("STT: пусто, пропускаю")
+            # Речь была (VAD сработал), но STT вернул пусто — шум, бормотание,
+            # слишком тихо. Раньше Оливия просто молчала, и пациент стоял в
+            # тишине, не понимая, услышали его или нет. Вместо этого спокойно
+            # просим повторить — но не больше 3 раз подряд, чтобы не
+            # приставать к человеку, который уже отошёл от стойки.
+            self._empty_streak += 1
+            if self._empty_streak <= 3:
+                fallback = (self.persona.prompts.get("fallback")
+                            or "Простите, я вас не расслышала. Повторите, "
+                               "пожалуйста?").strip()
+                logger.info(f"STT: пусто ({self._empty_streak}-й раз подряд) — прошу повторить")
+                if on_reply_text:
+                    await on_reply_text(fallback)
+                await self._speak(fallback, sink)
+            else:
+                logger.debug("STT: пусто уже 3 раза подряд — молчу")
             return None
+        self._empty_streak = 0
 
         logger.info(f"👤 {user_text}")
         if on_transcript:
@@ -199,7 +217,10 @@ class Conversation:
             if on_reply_text:
                 await on_reply_text(fallback)
             await self._speak(fallback, sink)
-            reply_parts = [fallback]
+            # Техническую заглушку в историю НЕ сохраняем: она сбивает модель
+            # («почему я говорила про заминку?») и портит следующие ответы.
+            logger.info(f"🤖 {fallback} [в историю не сохранено]")
+            return user_text
 
         reply = " ".join(reply_parts).strip()
         if reply:
@@ -222,9 +243,18 @@ class Conversation:
         greeting_injected = False
         async for piece in self.llm.stream(messages):
             buffer += piece
+            # Метка [ЗАЯВКА: ...] может содержать точки («Время=13.08») —
+            # вынимаем её из буфера ДО нарезки на предложения, иначе метка
+            # рвётся посередине и озвучивается пациенту.
+            buffer = self._extract_booking(buffer)
             while True:
                 m = _SENTENCE_END.search(buffer)
                 if not m:
+                    break
+                # Конец предложения внутри ещё не закрытой метки — ждём
+                # продолжения стрима, не режем.
+                open_idx = buffer.find("[ЗАЯВКА")
+                if open_idx != -1 and open_idx < m.end():
                     break
                 cut = m.end()
                 sentence = buffer[:cut].strip()
@@ -237,6 +267,9 @@ class Conversation:
                 yield sentence
         tail = buffer.strip()
         if tail:
+            tail = self._extract_booking(tail)
+            if not tail:
+                return
             if not greeting_injected:
                 tail = self._maybe_prepend_voice_greeting(tail)
             yield tail

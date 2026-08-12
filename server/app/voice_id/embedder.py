@@ -31,6 +31,13 @@ except ImportError:  # pragma: no cover
 
 SAMPLE_RATE = 16000  # тот же формат, что везде в пайплайне (PCM16 mono 16k)
 
+# Минимум РЕАЛЬНОЙ речи после VAD-чистки. Короче — отпечаток строится
+# почти из шума и потом не совпадает даже с тем же человеком (разбор:
+# «мусорный» отпечаток от 10.08 не совпадал с живым голосом на 0.6+,
+# тогда как дубли одного голоса дают 0.14–0.18). Лучше пропустить попытку,
+# чем записать мусор в базу.
+MIN_VOICED_SECONDS = 2.0
+
 
 def pcm16_to_float(audio: bytes) -> np.ndarray:
     """PCM16LE bytes → float32 в диапазоне [-1, 1], как ожидает Resemblyzer."""
@@ -59,14 +66,19 @@ class VoiceEmbedder:
         """
         Возвращает нормированный эмбеддинг накопленной речи пациента
         (bytes — PCM16 mono 16kHz) или None, если распознать не вышло
-        (тишина после VAD-обрезки, модель не загружена и т.п.).
+        (тишина/мусор после VAD-обрезки, модель не загружена и т.п.).
         """
         if not self.encoder:
             return None
         try:
             wav = pcm16_to_float(audio)
             processed = preprocess_wav(wav, source_sr=SAMPLE_RATE)
-            if processed.size == 0:
+            voiced_seconds = processed.size / SAMPLE_RATE
+            if voiced_seconds < MIN_VOICED_SECONDS:
+                logger.info(
+                    f"VoiceEmbedder: речи {voiced_seconds:.1f}с < {MIN_VOICED_SECONDS}с — "
+                    "отпечаток не строим (иначе в базу уйдёт шум)"
+                )
                 return None
             embedding = self.encoder.embed_utterance(processed)
             return embedding.astype(np.float32).tolist()

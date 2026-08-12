@@ -146,6 +146,34 @@ class VoiceMemoryStore:
         except Exception as e:
             logger.error(f"VoiceMemoryStore.touch_seen: {e}")
 
+    def update_embedding(self, patient_id: int, embedding: list[float], new_weight: float = 0.3) -> None:
+        """
+        Подмешивает свежий отпечаток к сохранённому (взвешенное среднее +
+        ренормализация). Вызывается при уверенном совпадении: голос человека
+        и акустика киоска «плывут», так база адаптируется сама.
+        new_weight — вклад нового отпечатка (0.3 = плавная адаптация).
+        """
+        try:
+            with self._connect() as conn:
+                cur = conn.execute(
+                    "select embedding_json from voice_patients where id = ?", (patient_id,)
+                )
+                row = cur.fetchone()
+                if not row:
+                    return
+                old = np.asarray(json.loads(row[0]), dtype=np.float32)
+                new = np.asarray(embedding, dtype=np.float32)
+                mixed = (1.0 - new_weight) * old + new_weight * new
+                norm = float(np.linalg.norm(mixed))
+                if norm > 0:
+                    mixed = mixed / norm
+                conn.execute(
+                    "update voice_patients set embedding_json = ?, last_seen_at = ? where id = ?",
+                    (json.dumps(mixed.tolist()), _now_iso(), patient_id),
+                )
+        except Exception as e:
+            logger.error(f"VoiceMemoryStore.update_embedding: {e}")
+
     # ── промпт ───────────────────────────────────────────────────────
     @staticmethod
     def format_for_prompt(match: VoiceMatch) -> str | None:
