@@ -22,6 +22,7 @@ from __future__ import annotations
 import asyncio
 import json
 import sys
+from datetime import datetime
 from pathlib import Path
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
@@ -295,6 +296,12 @@ async def ws_endpoint(ws: WebSocket):
                         # попытку состоявшейся, копим дальше
                         if voice_embedding:
                             voice_match_attempted = True
+                            if cfg.voice_debug_dump:
+                                dump_dir = Path("data/voice_debug")
+                                dump_dir.mkdir(parents=True, exist_ok=True)
+                                dump = dump_dir / f"{datetime.now().strftime('%Y%m%d_%H%M%S')}.pcm"
+                                dump.write_bytes(bytes(voice_sample_buf))
+                                logger.info(f"🎙️ Отладка: образец голоса сохранён в {dump}")
                             match = voice_memory.match(
                                 voice_embedding,
                                 cfg.voice_match_threshold,

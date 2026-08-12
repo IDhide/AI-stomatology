@@ -99,6 +99,10 @@ class Settings(BaseSettings):
     # на одном слове голосовой отпечаток слишком шумный
     voice_min_sample_seconds: float = Field(default=2.5, alias="VOICE_MIN_SAMPLE_SECONDS")
     voice_memory_path: str = Field(default="data/voice_memory.sqlite3", alias="VOICE_MEMORY_PATH")
+    # Отладка: сохранять накопленный образец голоса в data/voice_debug/*.pcm,
+    # чтобы анализировать, что реально слышит киоск (биометрия — только на
+    # время отладки, потом выключить!)
+    voice_debug_dump: bool = Field(default=False, alias="VOICE_DEBUG_DUMP")
 
     @property
     def has_grok(self) -> bool:
