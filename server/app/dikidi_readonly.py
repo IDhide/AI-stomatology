@@ -85,23 +85,30 @@ class DikidiReadOnly:
     # ── данные ───────────────────────────────────────────────────────
     async def today_bookings(self) -> list[dict]:
         """Записи на сегодня: [{time, client, service}, ...]."""
-        busy = await self._busy_for_day(0)
+        busy = await self._busy_for_day(0) or []
         return [
             {"time": b["start"], "client": b.get("client", ""), "service": b.get("service", "")}
             for b in busy
         ]
 
-    async def free_slots(self, days: int = 2) -> dict[str, list[str]]:
+    async def free_slots(self, days: int = 2) -> dict[str, list[str] | None]:
         """
         Свободные окна на ближайшие дни: {"2026-08-12": ["12:00", ...]}.
+        None вместо списка — данные по дню получить не удалось (API упал):
+        такой день НЕ показываем как свободный.
         Окно = начало визита по сетке grid_minutes, визит длится slot_minutes
         и не должен пересекаться с занятыми интервалами и закрытием клиники.
         """
-        result: dict[str, list[str]] = {}
+        result: dict[str, list[str] | None] = {}
         now = datetime.now()
         for offset in range(days):
             day = now.date() + timedelta(days=offset)
             busy = await self._busy_for_day(offset)
+            if busy is None:
+                # API упал — НЕ знаем занятость. Показать день полностью
+                # свободным было бы ложью: Оливия пообещает занятое время.
+                result[day.isoformat()] = None
+                continue
             busy_min = [(_to_min(b["start"]), _to_min(b["end"])) for b in busy]
             slots: list[str] = []
             start = _to_min(self.work_start)
@@ -117,8 +124,9 @@ class DikidiReadOnly:
             result[day.isoformat()] = slots
         return result
 
-    async def _busy_for_day(self, day_offset: int) -> list[dict]:
-        """Занятые интервалы дня: [{start, end, client, service}]."""
+    async def _busy_for_day(self, day_offset: int) -> list[dict] | None:
+        """Занятые интервалы дня: [{start, end, client, service}].
+        None — данные получить не удалось (API недоступен)."""
         if not self.enabled:
             return list(_DEMO_BUSY.get(day_offset, [])) if self.demo else []
         day = (datetime.now().date() + timedelta(days=day_offset)).isoformat()
@@ -126,7 +134,7 @@ class DikidiReadOnly:
             records = await self._fetch_bookings(day, day)
         except Exception as e:
             logger.error(f"DIKIDI: не смог получить записи на {day}: {e}")
-            return []
+            return None
         busy = []
         for item in records:
             start = item.get("time", "")
@@ -167,7 +175,7 @@ class DikidiReadOnly:
     def format_for_prompt(
         bookings: list[dict],
         available: bool = True,
-        free_slots: dict[str, list[str]] | None = None,
+        free_slots: dict[str, list[str] | None] | None = None,
     ) -> str:
         """Блок для system-промпта: расписание + свободные окна + правила read-only."""
         if not available:
@@ -190,11 +198,16 @@ class DikidiReadOnly:
             schedule = "ЗАПИСИ НА СЕГОДНЯ: список пуст или недоступен."
 
         slots_block = "СВОБОДНЫЕ ОКНА ДЛЯ ЗАПИСИ: нет данных."
+        slots_unknown = False
         if free_slots:
             parts = []
             today = datetime.now().date().isoformat()
             for day, slots in free_slots.items():
                 label = "сегодня" if day == today else f"{day[8:10]}.{day[5:7]}"
+                if slots is None:
+                    slots_unknown = True
+                    parts.append(f"  • {label}: данных нет (система записи не ответила)")
+                    continue
                 shown = slots[:10]  # не раздуваем промпт бесконечным списком
                 times = ", ".join(shown) if shown else "свободных окон нет"
                 parts.append(f"  • {label}: {times}")
@@ -216,6 +229,9 @@ class DikidiReadOnly:
             "ближайшее свободное в тот же день (или в соседний, если в этот "
             "окон нет). Клиника открывается в 12:00 — время раньше полудня "
             "не предлагай.\n"
+            "• Если по дню написано «данных нет» — не называй и не предлагай "
+            "время для этого дня: собери имя, пожелание по времени и телефон, "
+            "администратор уточнит и перезвонит.\n"
             "• Даже если окно свободно, НИКОГДА не подтверждай запись как "
             "состоявшуюся: говори «передам администратору, он перезвонит и "
             "согласует точное время».\n"

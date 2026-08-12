@@ -46,3 +46,19 @@ async def test_format_for_prompt_lists_free_slots():
     assert "СВОБОДНЫЕ ОКНА ДЛЯ ЗАПИСИ" in text
     assert "завтра" in text or "сегодня" in text
     assert "НИКОГДА не подтверждай запись" in text
+
+
+@pytest.mark.asyncio
+async def test_api_failure_marks_day_unknown_not_free(monkeypatch):
+    """Если API упал, день НЕ показываем полностью свободным — это ложь."""
+    dikidi = DikidiReadOnly(api_key="k", company_id="1")
+
+    async def boom(date_from, date_to):
+        raise RuntimeError("API 404")
+
+    monkeypatch.setattr(dikidi, "_fetch_bookings", boom)
+    slots = await dikidi.free_slots(days=2)
+
+    assert all(v is None for v in slots.values())
+    text = DikidiReadOnly.format_for_prompt([], dikidi.available, free_slots=slots)
+    assert "данных нет" in text
