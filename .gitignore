@@ -71,3 +71,5 @@ htmlcov/
 node_modules/
 package-lock.json
 data/conversations/
+data/bookings/
+data/voice_memory.sqlite3

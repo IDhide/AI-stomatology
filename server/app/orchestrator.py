@@ -17,16 +17,30 @@ from collections.abc import AsyncIterator, Awaitable, Callable
 
 from loguru import logger
 
+from .booking_store import BookingRequest
 from .persona import Persona
 from .providers.base import LLMProvider, STTProvider, TTSProvider
+from .voice_id.store import VoiceMatch
 
 # Конец предложения: точка/!/?/… + пробел. Нарезаем, чтобы отдавать в TTS
 # по фразам, а не по словам (иначе просодия рвётся).
 _SENTENCE_END = re.compile(r"([.!?…]+)(\s+|$)")
 
-# Пациент прощается — чтобы завершить диалог локально, даже если LLM лежит
+# Пациент прощается — чтобы завершить диалог локально, даже если LLM лежит.
+# Голое «пока» не считаем прощанием: «я пока подумаю» — это не «пока-пока».
 _FAREWELL_RE = re.compile(
-    r"\b(до свидания|до встречи|всего доброго|всего хорошего|пока|прощайте)\b",
+    r"\b(до свидания|до встречи|всего доброго|всего хорошего|пока-пока|прощайте)\b",
+    re.IGNORECASE,
+)
+
+# Служебная метка заявки на запись (см. промпт, раздел «Заявка на запись»).
+# Однострочная, без точек/запятых внутри — не режется на предложения
+# для TTS так же, как [КОНЕЦ], и не произносится вслух.
+_BOOKING_RE = re.compile(
+    r"\[ЗАЯВКА:\s*Имя\s*=\s*(?P<name>[^;\]]*)\s*;\s*"
+    r"Телефон\s*=\s*(?P<phone>[^;\]]*)\s*;\s*"
+    r"Время\s*=\s*(?P<time>[^;\]]*?)\s*"
+    r"(?:;\s*Что\s*=\s*(?P<note>[^;\]]*?)\s*)?\]",
     re.IGNORECASE,
 )
 
@@ -52,15 +66,25 @@ class Conversation:
         self._greeted = False
         self._extra_context = ""
         self.ended = False  # LLM поставил метку [КОНЕЦ] — диалог завершён
+        self._booking: BookingRequest | None = None  # LLM поставил метку [ЗАЯВКА: ...]
+        self._voice_match: VoiceMatch | None = None
+        self._voice_match_used = False
+        self._empty_streak = 0  # сколько раз подряд STT вернул пусто
 
     def set_context(self, text: str) -> None:
         """Дополнительный блок для system-промпта (например, записи DIKIDI)."""
         self._extra_context = text.strip()
 
+    def set_voice_match(self, match: VoiceMatch | None) -> None:
+        """Сохраняет распознанного по голосу пациента для персонализации."""
+        self._voice_match = match
+        self._voice_match_used = False
+
     # ── публичные точки входа ────────────────────────────────────────
     async def greet(self, sink: AudioSink, *, name: str | None = None) -> str:
         """Первая инициатива системы — приветствие (из ТЗ)."""
         self.ended = False
+        self._booking = None
         text = self.persona.greeting(returning=self._greeted, name=name)
         self._greeted = True
         await self._speak(text, sink)
@@ -83,7 +107,8 @@ class Conversation:
                         "тёплой фразой по итогам разговора, без вопросов.]"},
                 ]
                 parts = [p async for p in self.llm.stream(messages)]
-                text = self._strip_end_marker("".join(parts))[0].strip()
+                text = self._strip_end_marker("".join(parts))[0]
+                text = self._extract_booking(text).strip()
             except Exception:
                 logger.warning("LLM недоступен для прощания — шаблон")
         if not text:
@@ -98,6 +123,31 @@ class Conversation:
         if self._END_MARKER.search(text):
             return self._END_MARKER.sub(" ", text).strip(), True
         return text, False
+
+    def _extract_booking(self, text: str) -> str:
+        """
+        Вырезает служебную метку [ЗАЯВКА: ...] (не произносится, не
+        показывается) и сохраняет данные заявки. Если за разговор метка
+        встретилась несколько раз (пациент поправил номер/время) —
+        побеждает последняя, take_booking() отдаёт актуальную версию.
+        """
+        m = _BOOKING_RE.search(text)
+        if not m:
+            return text
+        self._booking = BookingRequest(
+            name=(m.group("name") or "").strip(),
+            phone_raw=(m.group("phone") or "").strip(),
+            preferred_time=(m.group("time") or "").strip(),
+            note=(m.group("note") or "").strip(),
+        )
+        return _BOOKING_RE.sub(" ", text).strip()
+
+    def take_booking(self) -> BookingRequest | None:
+        """Забирает и очищает собранную заявку — вызывается один раз на
+        каждую из возможных точек завершения сессии, чтобы не сохранить
+        одну и ту же заявку дважды."""
+        booking, self._booking = self._booking, None
+        return booking
 
     async def handle_utterance(
         self,
@@ -114,8 +164,24 @@ class Conversation:
         """
         user_text = await self.stt.transcribe(audio)
         if not user_text:
-            logger.debug("STT: пусто, пропускаю")
+            # Речь была (VAD сработал), но STT вернул пусто — шум, бормотание,
+            # слишком тихо. Раньше Оливия просто молчала, и пациент стоял в
+            # тишине, не понимая, услышали его или нет. Вместо этого спокойно
+            # просим повторить — но не больше 3 раз подряд, чтобы не
+            # приставать к человеку, который уже отошёл от стойки.
+            self._empty_streak += 1
+            if self._empty_streak <= 3:
+                fallback = (self.persona.prompts.get("fallback")
+                            or "Простите, я вас не расслышала. Повторите, "
+                               "пожалуйста?").strip()
+                logger.info(f"STT: пусто ({self._empty_streak}-й раз подряд) — прошу повторить")
+                if on_reply_text:
+                    await on_reply_text(fallback)
+                await self._speak(fallback, sink)
+            else:
+                logger.debug("STT: пусто уже 3 раза подряд — молчу")
             return None
+        self._empty_streak = 0
 
         logger.info(f"👤 {user_text}")
         if on_transcript:
@@ -129,6 +195,7 @@ class Conversation:
                 sentence, is_end = self._strip_end_marker(sentence)
                 if is_end:
                     self.ended = True
+                sentence = self._extract_booking(sentence)
                 if not sentence:
                     continue
                 reply_parts.append(sentence)
@@ -150,7 +217,10 @@ class Conversation:
             if on_reply_text:
                 await on_reply_text(fallback)
             await self._speak(fallback, sink)
-            reply_parts = [fallback]
+            # Техническую заглушку в историю НЕ сохраняем: она сбивает модель
+            # («почему я говорила про заминку?») и портит следующие ответы.
+            logger.info(f"🤖 {fallback} [в историю не сохранено]")
+            return user_text
 
         reply = " ".join(reply_parts).strip()
         if reply:
@@ -170,20 +240,55 @@ class Conversation:
             system = f"{system}\n\n{self._extra_context}"
         messages = [{"role": "system", "content": system}, *self.history]
         buffer = ""
+        greeting_injected = False
         async for piece in self.llm.stream(messages):
             buffer += piece
+            # Метка [ЗАЯВКА: ...] может содержать точки («Время=13.08») —
+            # вынимаем её из буфера ДО нарезки на предложения, иначе метка
+            # рвётся посередине и озвучивается пациенту.
+            buffer = self._extract_booking(buffer)
             while True:
                 m = _SENTENCE_END.search(buffer)
                 if not m:
                     break
+                # Конец предложения внутри ещё не закрытой метки — ждём
+                # продолжения стрима, не режем.
+                open_idx = buffer.find("[ЗАЯВКА")
+                if open_idx != -1 and open_idx < m.end():
+                    break
                 cut = m.end()
                 sentence = buffer[:cut].strip()
                 buffer = buffer[cut:]
-                if sentence:
-                    yield sentence
+                if not sentence:
+                    continue
+                if not greeting_injected:
+                    sentence = self._maybe_prepend_voice_greeting(sentence)
+                    greeting_injected = True
+                yield sentence
         tail = buffer.strip()
         if tail:
+            tail = self._extract_booking(tail)
+            if not tail:
+                return
+            if not greeting_injected:
+                tail = self._maybe_prepend_voice_greeting(tail)
             yield tail
+
+    def _maybe_prepend_voice_greeting(self, sentence: str) -> str:
+        """Вставляет персональное приветствие при высокой уверенности распознавания."""
+        if self._voice_match_used:
+            return sentence
+        match = self._voice_match
+        self._voice_match_used = True
+        if not match or match.is_new or not match.name:
+            return sentence
+        if match.confidence != "high":
+            return sentence
+        greeting = f"Приятно вас снова видеть, {match.name}!"
+        # не дублируем, если LLM уже сама начала с такой фразы
+        if sentence.startswith(greeting):
+            return sentence
+        return f"{greeting} {sentence[0].lower()}{sentence[1:]}" if sentence else greeting
 
     async def _speak(self, text: str, sink: AudioSink) -> None:
         # Ошибка синтеза не должна убивать разговор: текст уже ушёл на экран

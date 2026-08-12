@@ -32,7 +32,9 @@ export class MicCapture {
     this.silenceMs = 0;
     this.speechMs = 0;               // сколько реальной речи накопилось
     this.enabled = false;            // «слушаем ли сейчас пациента»
-    this.SILENCE_LIMIT = 800;        // мс тишины = конец фразы
+    this.SILENCE_LIMIT = 1600;       // мс тишины = конец фразы (человек может
+                                     // задуматься посреди предложения — 0.8с
+                                     // обрывало фразу на середине мысли)
     this.MIN_SPEECH_MS = 400;        // короче — шорох, не отправляем в STT
     this.THRESH = 0.012;             // порог энергии (RMS)
   }

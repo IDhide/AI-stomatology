@@ -18,3 +18,8 @@ supabase>=2.4
 # opencv-python-headless>=4.9
 # numpy>=1.26
 numpy>=1.26
+
+# ── Узнавание по голосу (опционально, см. VOICE_ID_ENABLED) ─────────
+# Тянет CPU-сборку PyTorch (~200-300 МБ). Ставить отдельно:
+#   pip install resemblyzer
+# resemblyzer>=0.1.4
