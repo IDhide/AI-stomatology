@@ -149,7 +149,8 @@ async def ws_endpoint(ws: WebSocket):
         company_id=cfg.dikidi_company_id,
         base_url=cfg.dikidi_base_url,
         demo=cfg.dikidi_demo,
-    )    convlog = ConversationLog(cfg.conversations_dir)
+    )
+    convlog = ConversationLog(cfg.conversations_dir)
 
     audio_buf = bytearray()
     recording = False
