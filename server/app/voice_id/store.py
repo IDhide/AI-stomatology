@@ -119,7 +119,31 @@ class VoiceMemoryStore:
             return []
 
     # ── запись ───────────────────────────────────────────────────────
+    # Если новый отпечаток ближе этого к уже сохранённому — это почти
+    # наверняка тот же человек, которого просто не узнали в этот визит
+    # (хрипотца, шум, мало речи). Чужие голоса лежат дальше (~0.48+).
+    # Вместо дубля в базе — подмешиваем отпечаток в существующий профиль.
+    DEDUP_DISTANCE = 0.45
+
     def enroll(self, embedding: list[float], name: str, phone: str | None = None) -> int | None:
+        rows = self._all_rows()
+        if rows:
+            query = np.asarray(embedding, dtype=np.float32)
+            best_id, best_dist = None, 2.0
+            for row_id, _name, _phone, emb in rows:
+                d = 1.0 - float(np.dot(query, emb))
+                if d < best_dist:
+                    best_id, best_dist = row_id, d
+            if best_id is not None and best_dist <= self.DEDUP_DISTANCE:
+                # дубль того же голоса: сливаем, а не плодим профили
+                self.update_embedding(best_id, embedding)
+                if phone:
+                    self._update_phone_if_empty(best_id, phone)
+                logger.info(
+                    f"🎙️ Отпечаток похож на существующий профиль id={best_id} "
+                    f"(distance={best_dist:.3f}) — объединил, дубль не создаю"
+                )
+                return best_id
         now = _now_iso()
         try:
             with self._connect() as conn:
@@ -135,6 +159,16 @@ class VoiceMemoryStore:
         except Exception as e:
             logger.error(f"VoiceMemoryStore.enroll: {e}")
             return None
+
+    def _update_phone_if_empty(self, patient_id: int, phone: str) -> None:
+        try:
+            with self._connect() as conn:
+                conn.execute(
+                    "update voice_patients set phone = ? where id = ? and (phone is null or phone = '')",
+                    (phone, patient_id),
+                )
+        except Exception as e:
+            logger.error(f"VoiceMemoryStore._update_phone_if_empty: {e}")
 
     def touch_seen(self, patient_id: int) -> None:
         try:
