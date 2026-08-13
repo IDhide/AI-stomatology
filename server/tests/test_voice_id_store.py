@@ -57,10 +57,12 @@ def test_match_far_vector_is_new_even_with_data_in_store(tmp_path):
 
 def test_match_picks_closest_of_several_patients(tmp_path):
     store = VoiceMemoryStore(str(tmp_path / "voice.sqlite3"))
+    # углы далеко друг от друга (> DEDUP_DISTANCE), иначе enroll сольёт
+    # «дубли» в один профиль — это новое осознанное поведение
     store.enroll(_unit_vector(0), name="Далёкий", phone=None)
-    store.enroll(_unit_vector(5), name="Близкий", phone=None)
+    store.enroll(_unit_vector(120), name="Близкий", phone=None)
 
-    match = store.match(_unit_vector(3), threshold=0.5)
+    match = store.match(_unit_vector(110), threshold=1.5)
 
     assert match.name == "Близкий"
 
@@ -190,3 +192,25 @@ def test_update_embedding_missing_patient_is_noop(tmp_path):
     store = VoiceMemoryStore(str(tmp_path / "voice.sqlite3"))
     # не должно падать на несуществующем id
     store.update_embedding(999, _unit_vector(10))
+
+
+def test_enroll_merges_duplicate_voice_instead_of_new_row(tmp_path):
+    """Похожий отпечаток (тот же человек в другой визит) не плодит дубли."""
+    store = VoiceMemoryStore(str(tmp_path / "voice.sqlite3"))
+    first_id = store.enroll(_unit_vector(0), name="Илья", phone=None)
+
+    second_id = store.enroll(_unit_vector(10), name="Илья", phone="+7 900 000-00-00")
+
+    assert second_id == first_id  # объединили, а не создали новый
+    rows = store._all_rows()
+    assert len(rows) == 1
+    # телефон дозаписался в существующий профиль
+    assert rows[0][2] == "+7 900 000-00-00"
+
+
+def test_enroll_keeps_truly_different_voice_separate(tmp_path):
+    store = VoiceMemoryStore(str(tmp_path / "voice.sqlite3"))
+    store.enroll(_unit_vector(0), name="Илья")
+    store.enroll(_unit_vector(150), name="Сергей")
+
+    assert len(store._all_rows()) == 2

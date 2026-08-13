@@ -60,5 +60,9 @@ async def test_api_failure_marks_day_unknown_not_free(monkeypatch):
     slots = await dikidi.free_slots(days=2)
 
     assert all(v is None for v in slots.values())
+    # все дни без данных → жёсткий блок «расписания нет», чтобы модель
+    # не придумывала занятость/окна
     text = DikidiReadOnly.format_for_prompt([], dikidi.available, free_slots=slots)
-    assert "данных нет" in text
+    assert "ДОСТУП К СИСТЕМЕ ЗАПИСИ" in text
+    assert "недоступен" in text
+    assert "НИКОГДА не называй конкретное время" in text
