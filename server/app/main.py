@@ -86,7 +86,7 @@ async def cache_control_static(request, call_next):
     if path == "/" or path.endswith((".js", ".css", ".html")):
         resp.headers["Cache-Control"] = "no-cache"
     elif path.startswith("/assets/") and path.endswith((".mp4", ".webm", ".ogg")):
-        resp.headers["Cache-Control"] = "public, max-age=3600"
+        resp.headers["Cache-Control"] = "public, max-age=86400"
     return resp
 
 

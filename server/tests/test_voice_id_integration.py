@@ -53,6 +53,17 @@ def embedder():
     return emb
 
 
+def _embed(embedder, pcm: bytes) -> list[float] | None:
+    """embed() с учётом боевого гейта MIN_VOICED_SECONDS (6с чистой речи):
+    короткую синтетическую фразу зацикливаем до ~8с сырого аудио, иначе
+    гейт честно вернёт None — он для того и сделан, чтобы отбраковывать
+    короткие образцы."""
+    min_bytes = int(8 * 16000) * 2
+    while len(pcm) < min_bytes:
+        pcm += pcm
+    return embedder.embed(pcm)
+
+
 @pytest.fixture
 def store(tmp_path):
     return VoiceMemoryStore(str(tmp_path / "voice_memory.sqlite3"))
@@ -120,8 +131,8 @@ async def test_real_voice_same_speaker_is_recognized(tmp_path, embedder, store):
         tmp_path,
     )
 
-    enroll_emb = embedder.embed(enroll_audio)
-    test_emb = embedder.embed(test_audio)
+    enroll_emb = _embed(embedder, enroll_audio)
+    test_emb = _embed(embedder, test_audio)
     assert enroll_emb is not None, " enrollment embedding is None"
     assert test_emb is not None, "test embedding is None"
 
@@ -149,8 +160,8 @@ async def test_real_voice_different_speaker_is_rejected(tmp_path, embedder, stor
         tmp_path,
     )
 
-    anna_emb = embedder.embed(anna_audio)
-    boris_emb = embedder.embed(boris_audio)
+    anna_emb = _embed(embedder, anna_audio)
+    boris_emb = _embed(embedder, boris_audio)
     assert anna_emb is not None
     assert boris_emb is not None
 
@@ -175,8 +186,8 @@ async def test_similar_sounding_stranger_is_not_falsely_identified(tmp_path, emb
         tmp_path,
     )
 
-    anna_emb = embedder.embed(anna_audio)
-    stranger_emb = embedder.embed(stranger_audio)
+    anna_emb = _embed(embedder, anna_audio)
+    stranger_emb = _embed(embedder, stranger_audio)
     assert anna_emb is not None
     assert stranger_emb is not None
 
@@ -205,8 +216,8 @@ async def test_voice_greeting_prompt_for_returning_patient(tmp_path, embedder, s
         tmp_path,
     )
 
-    first_emb = embedder.embed(anna_first)
-    return_emb = embedder.embed(anna_return)
+    first_emb = _embed(embedder, anna_first)
+    return_emb = _embed(embedder, anna_return)
     assert first_emb is not None
     assert return_emb is not None
 
