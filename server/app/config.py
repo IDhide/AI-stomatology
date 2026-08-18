@@ -40,10 +40,17 @@ class Settings(BaseSettings):
     # ── ElevenLabs (STT Scribe + TTS Flash) ─────────────────────────
     elevenlabs_api_key: str = Field(default="", alias="ELEVENLABS_API_KEY")
     tts_voice_id: str = Field(default="", alias="ELEVENLABS_VOICE_ID")
-    tts_model: str = Field(default="eleven_flash_v2_5", alias="ELEVENLABS_TTS_MODEL")
+    # multilingual_v2: у Flash v2.5 русская просодия и ударения заметно
+    # хуже (жалобы 19.08: «тон непонятный»). Цена — +0.3-0.5с к задержке.
+    tts_model: str = Field(default="eleven_multilingual_v2", alias="ELEVENLABS_TTS_MODEL")
     stt_model: str = Field(default="scribe_v1", alias="ELEVENLABS_STT_MODEL")
     # PCM 16k — удобно для браузера (WebAudio) и минимальной задержки
     tts_output_format: str = Field(default="pcm_16000", alias="ELEVENLABS_OUTPUT_FORMAT")
+    # Тон: 0.9 звучит ровно, но «мёртво» и монотонно; 0.65 — ровный, но
+    # живой администратор. Выносим в .env для подбора на слух.
+    tts_stability: float = Field(default=0.65, alias="ELEVENLABS_TTS_STABILITY")
+    tts_similarity_boost: float = Field(default=0.75, alias="ELEVENLABS_TTS_SIMILARITY")
+    tts_speed: float = Field(default=1.0, alias="ELEVENLABS_TTS_SPEED")
 
     # ── DIKIDI (только чтение записей) ──────────────────────────────
     dikidi_api_key: str = Field(default="", alias="DIKIDI_API_KEY")

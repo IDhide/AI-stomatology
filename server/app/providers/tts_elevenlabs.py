@@ -21,13 +21,19 @@ class ElevenLabsTTS(TTSProvider):
         self,
         api_key: str,
         voice_id: str,
-        model: str = "eleven_flash_v2_5",
+        model: str = "eleven_multilingual_v2",
         output_format: str = "pcm_16000",
+        stability: float = 0.65,
+        similarity_boost: float = 0.75,
+        speed: float = 1.0,
     ):
         self.api_key = api_key
         self.voice_id = voice_id
         self.model = model
         self.output_format = output_format
+        self.stability = stability
+        self.similarity_boost = similarity_boost
+        self.speed = speed
         self._client = httpx.AsyncClient(timeout=httpx.Timeout(30.0, connect=10.0))
 
     async def stream(self, text: str) -> AsyncIterator[bytes]:
@@ -47,15 +53,15 @@ class ElevenLabsTTS(TTSProvider):
             "model_id": self.model,
             "language_code": "ru",
             "voice_settings": {
-                # Голосовой киоск: тембр и интонация должны быть РОВНЫМИ от
-                # фразы к фразе (сдержанный администратор). Низкая stability
-                # (0.3–0.5) даёт «выразительность» ценой скачков тембра —
-                # каждая фраза звучит как другой человек.
-                "stability": 0.9,
-                "similarity_boost": 0.75,
+                # Голосовой киоск: тембр и интонация ровные от фразы к фразе
+                # (сдержанный администратор), но не мёртвые: stability ~0.65
+                # даёт стабильный тембр без монотонной «роботности» 0.9.
+                # Значения приходят из .env (подбирались на слух, 19.08).
+                "stability": self.stability,
+                "similarity_boost": self.similarity_boost,
                 "style": 0.0,          # без актёрских интонаций
                 "use_speaker_boost": True,
-                "speed": 1.0,
+                "speed": self.speed,
             },
         }
 

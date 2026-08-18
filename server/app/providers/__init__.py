@@ -44,12 +44,18 @@ def build_tts(cfg: Settings) -> TTSProvider:
     if cfg.tts_provider == "elevenlabs" and cfg.has_elevenlabs and cfg.tts_voice_id:
         from .tts_elevenlabs import ElevenLabsTTS
 
-        logger.info(f"TTS: ElevenLabs {cfg.tts_model}")
+        logger.info(
+            f"TTS: ElevenLabs {cfg.tts_model} "
+            f"(stability={cfg.tts_stability}, speed={cfg.tts_speed})"
+        )
         return ElevenLabsTTS(
             api_key=cfg.elevenlabs_api_key,
             voice_id=cfg.tts_voice_id,
             model=cfg.tts_model,
             output_format=cfg.tts_output_format,
+            stability=cfg.tts_stability,
+            similarity_boost=cfg.tts_similarity_boost,
+            speed=cfg.tts_speed,
         )
     logger.warning("TTS: mock (нет ключа ElevenLabs или voice_id)")
     return MockTTS()
