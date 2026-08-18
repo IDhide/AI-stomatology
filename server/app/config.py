@@ -99,12 +99,11 @@ class Settings(BaseSettings):
     # Мягкий порог: при совпадении между threshold и weak Оливия НЕ
     # утверждает личность, а мягко переспрашивает («Кажется, узнала вас…»).
     voice_match_weak_threshold: float = Field(default=0.35, alias="VOICE_MATCH_WEAK_THRESHOLD")
-    # Сколько секунд речи пациента копить, прежде чем пробовать узнать —
-    # на короткой реплике голосовой отпечаток слишком шумный (пары фраз по
-    # 2–3с одного человека расходятся на 0.32, как чужие). Реальный барьер —
-    # MIN_VOICED_SECONDS в embedder (6с ЧИСТОЙ речи); это — верхняя оценка
-    # сырого аудио с паузами, при которой 6с речи обычно уже набралось.
-    voice_min_sample_seconds: float = Field(default=12.0, alias="VOICE_MIN_SAMPLE_SECONDS")
+    # Сколько секунд речи пациента копить, прежде чем пробовать узнать.
+    # Реальный барьер качества — MIN_VOICED_SECONDS в embedder (6с ЧИСТОЙ
+    # речи); это — точка ПЕРВОЙ попытки по сырому аудио с паузами. 8с ≈
+    # 2–3 реплики: если чистой речи мало, попытка не сгорает, копим дальше.
+    voice_min_sample_seconds: float = Field(default=8.0, alias="VOICE_MIN_SAMPLE_SECONDS")
     voice_memory_path: str = Field(default="data/voice_memory.sqlite3", alias="VOICE_MEMORY_PATH")
     # Отладка: сохранять накопленный образец голоса в data/voice_debug/*.pcm,
     # чтобы анализировать, что реально слышит киоск (биометрия — только на
