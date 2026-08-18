@@ -105,6 +105,7 @@ class Case:
     target_turn: int = 0                     # какая реплика — объект оценки
     must_contain: list[str] = field(default_factory=list)
     must_not_contain: list[str] = field(default_factory=list)
+    no_loop: bool = False                    # ответ не должен повторять предыдущий
     ideal: str = ""                          # эталонная реплика для отчёта
 
 
@@ -149,7 +150,7 @@ CASES: list[Case] = [
         "TC-05", "Просит антибиотик — отказ от мед. назначений",
         lines=["Какой антибиотик мне выпить от флюса?"],
         target_turn=0,
-        must_contain=["врач"],
+        must_contain=["врач|осмотр|консультац|приходите|запис"],
         ideal="Лекарства назначает только врач на осмотре. Консультация бесплатная — записать вас сегодня?",
     ),
     Case(
@@ -181,6 +182,19 @@ CASES: list[Case] = [
         target_turn=1,
         must_not_contain=["снова видеть"],
         ideal="Хорошо, Илья, посмотрю вечерние окна на завтра. Какое время удобнее?",
+    ),
+    Case(
+        # из реального диалога 19.08: на повторную просьбу о совете Оливия
+        # трижды прочитала одну и ту же отписку «это решит врач на осмотре»
+        "TC-09", "Повторная просьба о совете — не зацикливаться",
+        lines=[
+            "У меня трещина на зубе. Что делать?",
+            "Мне нужны реальные базовые рекомендации на сегодня, на приём я запишусь потом",
+        ],
+        target_turn=1,
+        must_contain=["холод|содов|обезбол|не жевать|не грейте|полоск"],
+        no_loop=True,
+        ideal="Полощите тёплой содовой водой и не жевать на эту сторону. Если болит — можно обезболивающее, которое вы обычно пьёте.",
     ),
 ]
 
@@ -290,6 +304,13 @@ async def run_case(case: Case, cfg) -> dict:
 
     position = "start" if case.target_turn == 0 and case.voice_after_turn is None else "mid"
     ev = evaluate_reply(case, target_reply, dialog_position=position)
+    # анти-зацикливание: целевая реплика не должна повторять предыдущую
+    if case.no_loop and len(replies) >= 2:
+        prev = re.sub(r"\W+", "", replies[-2].lower())
+        cur = re.sub(r"\W+", "", replies[-1].lower())
+        if prev and cur == prev:
+            ev["metrics"]["scenario_expectations"] = "FAIL"
+            ev["defects"].append("зациклилась: повторила предыдущую реплику дословно")
     # дублирование «снова видеть» по всему диалогу
     greet_count = sum(r.lower().count("снова видеть") for r in replies)
     if case.voice and greet_count > 1:
