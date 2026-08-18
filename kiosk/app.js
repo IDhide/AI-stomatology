@@ -220,7 +220,18 @@ async function boot() {
     onUtteranceEnd: () => send({ type: "utterance_end" }),
     onUtteranceCancel: () => send({ type: "utterance_cancel" }),
   });
-  await mic.init();
+  try {
+    await mic.init();
+  } catch (e) {
+    // По http://IP (не localhost, не HTTPS) браузер блокирует микрофон —
+    // getUserMedia бросает. Раньше boot умирал здесь молча: ни WS, ни
+    // объяснения — «режим ожидания» навсегда. Теперь: WS подключаем всё
+    // равно (кнопки отладки, озвучка работают), а причину пишем на экран.
+    console.warn("микрофон недоступен:", e);
+    mic = null;
+    statusEl.textContent =
+      "браузер заблокировал микрофон: откройте киоск по HTTPS или через localhost";
+  }
 
   connect();
   startWakeWord();
