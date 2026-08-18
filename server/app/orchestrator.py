@@ -264,6 +264,9 @@ class Conversation:
                 if not greeting_injected:
                     sentence = self._maybe_prepend_voice_greeting(sentence)
                     greeting_injected = True
+                if not sentence:
+                    # приветствие посреди диалога срезано целиком — пропускаем
+                    continue
                 yield sentence
         tail = buffer.strip()
         if tail:
@@ -272,10 +275,14 @@ class Conversation:
                 return
             if not greeting_injected:
                 tail = self._maybe_prepend_voice_greeting(tail)
-            yield tail
+            if tail:
+                yield tail
 
     def _maybe_prepend_voice_greeting(self, sentence: str) -> str:
-        """Вставляет персональное приветствие при высокой уверенности распознавания."""
+        """Вклеивает персональное приветствие при высокой уверенности —
+        но ТОЛЬКО в самом начале диалога. Посреди разговора механическая
+        вставка нелепа (13.08: «снова видеть» на десятой реплике), там имя
+        подаёт промпт через контекст «РАСПОЗНАВАНИЕ ПО ГОЛОСУ»."""
         if self._voice_match_used:
             return sentence
         match = self._voice_match
@@ -284,9 +291,21 @@ class Conversation:
             return sentence
         if match.confidence != "high":
             return sentence
+        # диалог уже идёт (есть реплики ассистента кроме приветствия) — поздно
+        # для приветствия. LLM иногда всё равно здоровается по промпту,
+        # несмотря на запрет (флаки) — срезаем фразу детерминированно.
+        assistant_turns = sum(1 for m in self.history if m["role"] == "assistant")
+        if assistant_turns > 1:
+            pattern = rf"^\s*приятно вас снова видеть,?\s*{re.escape(match.name)}\s*[.!]?\s*"
+            stripped = re.sub(pattern, "", sentence, flags=re.IGNORECASE)
+            if not stripped:
+                return ""  # вся фраза была приветствием — выкидываем
+            return stripped[:1].upper() + stripped[1:]
         greeting = f"Приятно вас снова видеть, {match.name}!"
-        # не дублируем, если LLM уже сама начала с такой фразы
-        if sentence.startswith(greeting):
+        # не дублируем, если LLM уже сама начала с такой фразы — сравниваем
+        # без пунктуации/регистра (13.08: «Илья!» vs «Илья.» давало дубль)
+        norm = greeting.lower().rstrip(".! ")
+        if sentence.lower().lstrip().startswith(norm):
             return sentence
         return f"{greeting} {sentence[0].lower()}{sentence[1:]}" if sentence else greeting
 

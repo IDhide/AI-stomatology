@@ -151,3 +151,88 @@ async def test_voice_match_new_patient_no_greeting():
     await conv.handle_utterance(b"\x00\x00", sink, on_transcript=_transcript, on_reply_text=_reply)
 
     assert "Приятно вас снова видеть" not in spoken[0]
+
+
+@pytest.mark.asyncio
+async def test_voice_greeting_not_prepended_mid_dialog():
+    """Матч пришёл посреди разговора — механическое приветствие не вклеиваем,
+    имя подаёт промпт через контекст (13.08: «снова видеть» на 10-й реплике)."""
+    conv = _conv(llm=_FakeLLM("Запишем вас на завтра."))
+    # диалог уже идёт: приветствие + два ответа ассистента в истории
+    conv.history.append({"role": "assistant", "content": "Здравствуйте!"})
+    conv.history.append({"role": "user", "content": "Хочу на чистку"})
+    conv.history.append({"role": "assistant", "content": "Хорошо, когда удобно?"})
+    conv.history.append({"role": "user", "content": "Завтра вечером"})
+    conv.set_voice_match(VoiceMatch(
+        patient_id=1,
+        name="Илья",
+        phone=None,
+        distance=0.10,
+        is_new=False,
+        confidence="high",
+    ))
+
+    spoken: list[str] = []
+    async def sink(chunk: bytes) -> None:
+        pass
+    async def _transcript(t: str) -> None:
+        pass
+    async def _reply(t: str) -> None:
+        spoken.append(t)
+
+    await conv.handle_utterance(b"\x00\x00", sink, on_transcript=_transcript, on_reply_text=_reply)
+
+    assert spoken[0] == "Запишем вас на завтра."
+
+
+@pytest.mark.asyncio
+async def test_voice_greeting_no_duplicate_punctuation_variant():
+    """LLM сама начала с приветствия, но с «.» вместо «!» — не дублируем."""
+    conv = _conv(llm=_FakeLLM("Приятно вас снова видеть, Анна. Чем могу помочь?"))
+    conv.set_voice_match(VoiceMatch(
+        patient_id=1,
+        name="Анна",
+        phone=None,
+        distance=0.10,
+        is_new=False,
+        confidence="high",
+    ))
+
+    spoken: list[str] = []
+    async def sink(chunk: bytes) -> None:
+        pass
+    async def _transcript(t: str) -> None:
+        pass
+    async def _reply(t: str) -> None:
+        spoken.append(t)
+
+    await conv.handle_utterance(b"\x00\x00", sink, on_transcript=_transcript, on_reply_text=_reply)
+
+    assert spoken[0].lower().count("приятно вас снова видеть") == 1
+
+
+@pytest.mark.asyncio
+async def test_llm_greeting_stripped_mid_dialog():
+    """LLM нарушила промпт и сама поздоровалась посреди диалога —
+    фраза срезается детерминированно, имя остаётся только из контекста."""
+    conv = _conv(llm=_FakeLLM("Приятно вас снова видеть, Илья. На завтра есть окна в семь."))
+    conv.history.append({"role": "assistant", "content": "Здравствуйте!"})
+    conv.history.append({"role": "user", "content": "Хочу на чистку"})
+    conv.history.append({"role": "assistant", "content": "Когда удобно?"})
+    conv.set_voice_match(VoiceMatch(
+        patient_id=1, name="Илья", phone=None,
+        distance=0.10, is_new=False, confidence="high",
+    ))
+
+    spoken: list[str] = []
+    async def sink(chunk: bytes) -> None:
+        pass
+    async def _transcript(t: str) -> None:
+        pass
+    async def _reply(t: str) -> None:
+        spoken.append(t)
+
+    await conv.handle_utterance(b"\x00\x00", sink, on_transcript=_transcript, on_reply_text=_reply)
+
+    assert "снова видеть" not in spoken[0].lower()
+    assert spoken[0].startswith("На завтра есть окна")
