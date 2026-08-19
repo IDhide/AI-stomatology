@@ -33,6 +33,20 @@ _FAREWELL_RE = re.compile(
     re.IGNORECASE,
 )
 
+# Повторное приветствие в первом ответе LLM: приветствие уже прозвучало
+# от шаблона при появлении пациента, а модель всё равно здоровается заново
+# («Здравствуйте. Меня зовут Оливия. Чем могу помочь?») — слышится как
+# двойное приветствие. Срезаем такие фрагменты детерминированно.
+_REPEAT_GREETING_RE = re.compile(
+    r"^\s*(?:"
+    r"здравствуйте|здравствуй|приветствую\s+вас|добро\s+пожаловать"
+    r"|добрый\s+(?:день|вечер)|доброе\s+утро"
+    r"|меня\s+зовут\s+оливия"
+    r"|я\s+[-—]?\s*оливия(?:\s*,?\s*администратор(?:\s+клиники)?)?"
+    r")[\s,.!—–-]*",
+    re.IGNORECASE,
+)
+
 # Служебная метка заявки на запись (см. промпт, раздел «Заявка на запись»).
 # Однострочная, без точек/запятых внутри — не режется на предложения
 # для TTS так же, как [КОНЕЦ], и не произносится вслух.
@@ -241,6 +255,10 @@ class Conversation:
         messages = [{"role": "system", "content": system}, *self.history]
         buffer = ""
         greeting_injected = False
+        # повторное приветствие может растянуться на несколько предложений
+        # («Здравствуйте. Меня зовут Оливия. …») — срезаем, пока не дойдём
+        # до первой содержательной фразы
+        stripping_greeting = True
         async for piece in self.llm.stream(messages):
             buffer += piece
             # Метка [ЗАЯВКА: ...] может содержать точки («Время=13.08») —
@@ -262,6 +280,13 @@ class Conversation:
                 if not sentence:
                     continue
                 if not greeting_injected:
+                    if stripping_greeting:
+                        sentence = self._strip_repeat_greeting(sentence)
+                        if not sentence:
+                            # вся фраза — повторное «здравствуйте», ждём
+                            # содержательное продолжение реплики
+                            continue
+                        stripping_greeting = False
                     sentence = self._maybe_prepend_voice_greeting(sentence)
                     greeting_injected = True
                 if not sentence:
@@ -274,9 +299,35 @@ class Conversation:
             if not tail:
                 return
             if not greeting_injected:
+                if stripping_greeting:
+                    tail = self._strip_repeat_greeting(tail)
+                    if not tail:
+                        return
                 tail = self._maybe_prepend_voice_greeting(tail)
             if tail:
                 yield tail
+
+    def _strip_repeat_greeting(self, sentence: str) -> str:
+        """Срезает повторное «Здравствуйте! Меня зовут Оливия…» в первом
+        ответе LLM: приветствие уже прозвучало шаблоном при появлении
+        пациента, а модель иногда здоровается заново — слышится как двойное
+        приветствие (19.08: на «Здравствуйте» отвечала «Здравствуйте.
+        Меня зовут Оливия. Чем могу помочь?»). Посреди диалога не трогаем:
+        там «меня зовут Оливия» может быть ответом на вопрос «как вас
+        зовут»."""
+        if not self._greeted:
+            return sentence
+        assistant_turns = sum(1 for m in self.history if m["role"] == "assistant")
+        if assistant_turns > 1:
+            return sentence
+        while True:
+            stripped = _REPEAT_GREETING_RE.sub("", sentence, count=1)
+            if stripped == sentence:
+                break
+            sentence = stripped
+        if not sentence:
+            return ""
+        return sentence[:1].upper() + sentence[1:]
 
     def _maybe_prepend_voice_greeting(self, sentence: str) -> str:
         """Вклеивает персональное приветствие при высокой уверенности —
