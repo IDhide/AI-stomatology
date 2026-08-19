@@ -35,6 +35,7 @@ def build_llm(cfg: Settings) -> LLMProvider:
             model=cfg.grok_model,
             temperature=cfg.llm_temperature,
             max_tokens=cfg.llm_max_tokens,
+            timeout=cfg.llm_timeout,
         )
     logger.warning("LLM: mock (нет ключа XAI)")
     return MockLLM()

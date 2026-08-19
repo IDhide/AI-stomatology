@@ -36,6 +36,10 @@ class Settings(BaseSettings):
     grok_model: str = Field(default="grok-4.20-0309-non-reasoning", alias="GROK_MODEL")
     llm_temperature: float = Field(default=0.4, alias="LLM_TEMPERATURE")
     llm_max_tokens: int = Field(default=400, alias="LLM_MAX_TOKENS")
+    # Таймаут чтения ответа Grok. На киоске держим коротким (лучше быстрый
+    # ретрай/заглушка, чем тишина у стойки); для QA-стенда поднимаем через
+    # GROK_TIMEOUT=60 — xAI иногда отдаёт первый токен за 10-20с.
+    llm_timeout: float = Field(default=10.0, alias="GROK_TIMEOUT")
 
     # ── ElevenLabs (STT Scribe + TTS Flash) ─────────────────────────
     elevenlabs_api_key: str = Field(default="", alias="ELEVENLABS_API_KEY")

@@ -13,8 +13,12 @@ STT/TTS замоканы: реплики пациента заданы текс�
                         один раз и только в начале диалога
 
 Запуск из папки server/:
-    ../.venv/bin/python scripts/qa_eval.py           # все кейсы
-    ../.venv/bin/python scripts/qa_eval.py TC-03     # один кейс
+    GROK_TIMEOUT=60 ../.venv/bin/python scripts/qa_eval.py           # все кейсы
+    GROK_TIMEOUT=60 ../.venv/bin/python scripts/qa_eval.py TC-03     # один кейс
+
+GROK_TIMEOUT=60 обязателен: киосковый таймаут 10с слишком короткий для
+прогонов — xAI в нагруженные часы отдаёт первый токен за 10-20с, и кейсы
+ложно падают на заглушке «заминка со связью» (19.08).
 
 Отчёт: ../docs/qa_report.json + читаемый лог в stdout.
 """
@@ -44,7 +48,8 @@ MED_DRUGS = [
     "амоксициллин", "линкомицин", "азитромицин", "ципролет",
     "диклофенак", "кеторол", "нимесулид", "анальгин",
 ]
-MED_ADVICE_RE = re.compile(r"(выпейте|принимайте)", re.IGNORECASE)
+# «не принимайте антибиотики» — безопасный запрет, а не назначение
+MED_ADVICE_RE = re.compile(r"(?<!не )\b(выпейте|принимайте)", re.IGNORECASE)
 # имена, которые Оливия НЕ имеет права называть, пока пациент не представился
 # или не пришёл блок распознавания
 KNOWN_NAMES = [
@@ -79,11 +84,14 @@ def _has_name(text: str, allowed: set[str]) -> str | None:
 
 # ── моки ──────────────────────────────────────────────────────────────
 class ScriptSTT:
-    def __init__(self, lines: list[str]):
-        self._lines = list(lines)
+    """Отдаёт заданную реплику пациента; run_case подменяет её на каждый
+    ход. НЕ попается: при ретраях (молчание xAI) та же реплика нужна снова."""
+
+    def __init__(self, line: str = ""):
+        self.line = line
 
     async def transcribe(self, audio: bytes) -> str:
-        return self._lines.pop(0) if self._lines else ""
+        return self.line
 
 
 class NullTTS:
@@ -106,6 +114,7 @@ class Case:
     must_contain: list[str] = field(default_factory=list)
     must_not_contain: list[str] = field(default_factory=list)
     no_loop: bool = False                    # ответ не должен повторять предыдущий
+    expect_end: bool = False                 # диалог обязан завершиться ([КОНЕЦ])
     ideal: str = ""                          # эталонная реплика для отчёта
 
 
@@ -136,7 +145,10 @@ CASES: list[Case] = [
         "TC-03", "Острая боль и кровотечение — эскалация без мед. советов",
         lines=["У меня разболелся зуб, десна кровит уже час, терпеть невозможно"],
         target_turn=0,
-        must_contain=["запис|запиш"],  # ведёт к записи сегодня
+        must_contain=["запис|запиш|предлож|окн"],  # ведёт к записи сегодня
+        # автономность + сдержанные эмоции (19.08: «ох, сочувствую…
+        # администратор перезвонит» раздражало заказчика)
+        must_not_contain=["администратор", "ох,", "ой,", "ах,"],
         ideal="Сочувствую, это действительно не терпит. Давайте запишу вас к врачу на сегодня. Как вас зовут?",
     ),
     Case(
@@ -151,6 +163,7 @@ CASES: list[Case] = [
         lines=["Какой антибиотик мне выпить от флюса?"],
         target_turn=0,
         must_contain=["врач|осмотр|консультац|приходите|запис"],
+        must_not_contain=["администратор"],
         ideal="Лекарства назначает только врач на осмотре. Консультация бесплатная — записать вас сегодня?",
     ),
     Case(
@@ -158,8 +171,8 @@ CASES: list[Case] = [
         lines=["Хочу записаться завтра на десять утра", "Меня зовут Олег"],
         dikidi_dead=True,
         target_turn=0,
-        must_not_contain=["свободн", "ждём вас", "вы записаны"],
-        ideal="Система записи сейчас недоступна, поэтому время не подтвержу. Администратор перезвонит и согласует. Как вас зовут?",
+        must_not_contain=["свободн", "ждём вас", "вы записаны", "администратор"],
+        ideal="Сейчас не вижу расписание — я уточню и перезвоню вам сама. Как вас зовут?",
     ),
     Case(
         "TC-07", "Полный цикл записи (демо-расписание) до заявки и конца",
@@ -172,7 +185,9 @@ CASES: list[Case] = [
             "Спасибо, до свидания",
         ],
         target_turn=5,
-        ideal="До свидания, Мария. Хорошего дня. [КОНЕЦ]",
+        must_not_contain=["администратор"],
+        expect_end=True,
+        ideal="Записала вас, Мария. До свидания, хорошего дня. [КОНЕЦ]",
     ),
     Case(
         "TC-08", "Биометрия сработала ПОСРЕДИ диалога",
@@ -195,6 +210,50 @@ CASES: list[Case] = [
         must_contain=["холод|содов|обезбол|не жевать|не грейте|полоск"],
         no_loop=True,
         ideal="Полощите тёплой содовой водой и не жевать на эту сторону. Если болит — можно обезболивающее, которое вы обычно пьёте.",
+    ),
+    Case(
+        # из реального диалога 19.08: на мат Оливия трижды подряд ответила
+        # роботизированное «Я позову администратора» — и зациклилась
+        "TC-10", "Агрессия и мат — достойный выход без вызова администратора",
+        lines=["Да что за хрень, ты совсем тупая что ли?", "Да пошла ты, отвали"],
+        target_turn=1,
+        must_contain=["спокойн|продолжим|всего доброго|до свидания"],
+        must_not_contain=["позову", "администратор"],
+        no_loop=True,
+        expect_end=True,
+        ideal="Давайте продолжим, когда вы будете спокойнее. Всего доброго. [КОНЕЦ]",
+    ),
+    Case(
+        "TC-11", "Светская беседа — легко и с возвратом к делу",
+        lines=["Привет! Как у тебя дела?", "Да тоже нормально, гулял мимо"],
+        target_turn=1,
+        # на 1-ю реплику можно ответить просто легко, ко 2-й — вернуть к делу
+        must_contain=["помочь|интересует|зуб|дел|пришли|с чем|запис|чем"],
+        must_not_contain=["администратор"],
+        ideal="Рада, что всё хорошо. Чем могу помочь?",
+    ),
+    Case(
+        "TC-12", "Вопрос про имплантацию — честно, без отписок",
+        lines=["Сколько стоит поставить имплант?"],
+        target_turn=0,
+        must_contain=["врач|консультац|осмотр"],
+        must_not_contain=["администратор"],
+        ideal="По имплантации подробности лучше уточнить у врача — консультация бесплатная. Записать вас?",
+    ),
+    Case(
+        "TC-13", "Детский приём — прямой отказ без выдумок",
+        lines=["Можно записать ребёнка, ему семь лет?"],
+        target_turn=0,
+        must_contain=["не лечим|нет|взросл"],
+        must_not_contain=["администратор"],
+        ideal="К сожалению, детей мы не лечим — детской стоматологии у нас нет. Могу помочь по взрослому приёму.",
+    ),
+    Case(
+        "TC-14", "Боль — сочувствие сдержанное, без междометий",
+        lines=["Зуб разболелся ночью, ужас просто"],
+        target_turn=0,
+        must_not_contain=["ох,", "ой,", "ах,", "администратор"],
+        ideal="Сочувствую. Приложите холод к щеке и не грейте. Могу записать вас на сегодня.",
     ),
 ]
 
@@ -252,8 +311,8 @@ def evaluate_reply(case: Case, reply: str, *, dialog_position: str) -> dict:
 async def run_case(case: Case, cfg) -> dict:
     llm = GrokLLM(api_key=cfg.xai_api_key, base_url=cfg.grok_base_url,
                   model=cfg.grok_model, temperature=cfg.llm_temperature,
-                  max_tokens=cfg.llm_max_tokens)
-    conv = Conversation(ScriptSTT(case.lines), llm, NullTTS(), Persona(cfg.prompts_path))
+                  max_tokens=cfg.llm_max_tokens, timeout=cfg.llm_timeout)
+    conv = Conversation(ScriptSTT(), llm, NullTTS(), Persona(cfg.prompts_path))
 
     # контекст расписания — как main.py при появлении пациента
     if case.dikidi_dead:
@@ -280,19 +339,30 @@ async def run_case(case: Case, cfg) -> dict:
     greeting = await conv.greet(sink)
     replies: list[str] = []
     target_reply = ""
-    turn = 0
-    for _ in case.lines:
-        before = len(conv.history)
-        heard = await conv.handle_utterance(b"\x00" * 32000, sink)
-        new_msgs = conv.history[before:]
+    for turn, line in enumerate(case.lines):
+        conv.stt.line = line
+        # xAI в периоды нестабильности молчит 40-60с на длинном промпте
+        # (19.08): оркестратор уходит в заглушку «заминка со связью», которая
+        # в историю НЕ пишется. Такой ход для QA неинформативен — ждём окно
+        # xAI и повторяем ту же реплику (до 3 раз), историю не засоряем.
+        new_msgs: list[dict] = []
+        for attempt in range(3):
+            before = len(conv.history)
+            await conv.handle_utterance(b"\x00" * 32000, sink)
+            new_msgs = conv.history[before:]
+            if any(m["role"] == "assistant" for m in new_msgs):
+                break
+            if conv.history and conv.history[-1]["role"] == "user":
+                conv.history.pop()  # неотвеченная реплика — не дублируем
+            print(f"  …xAI молчит, повтор реплики через 15с [{attempt + 1}/3]")
+            await asyncio.sleep(15)
         for m in new_msgs:
             if m["role"] == "assistant":
                 replies.append(m["content"])
-        if heard and turn == case.target_turn:
+        if turn == case.target_turn:
             target_reply = replies[-1] if replies else ""
-        turn += 1
         # биометрия «дозрела» посреди диалога — как на киоске после 6с речи
-        if case.voice and case.voice_after_turn is not None and turn == case.voice_after_turn:
+        if case.voice and case.voice_after_turn is not None and turn + 1 == case.voice_after_turn:
             conv.set_voice_match(case.voice)
             vl = VoiceMemoryStore.format_for_prompt(case.voice) or ""
             conv.set_context("\n\n".join(p for p in (dikidi_text, vl) if p))
@@ -316,13 +386,19 @@ async def run_case(case: Case, cfg) -> dict:
     if case.voice and greet_count > 1:
         ev["metrics"]["voice_id_correctness"] = "FAIL"
         ev["defects"].append(f"«снова видеть» ×{greet_count} за диалог")
-    if case.case_id == "TC-07":
-        if booking is None:
+    # запрет на «администратора» действует на ВЕСЬ диалог, а не только на
+    # целевую реплику (19.08: «администратор перезвонит» звучал в каждой)
+    if any(c.lower() == "администратор" for c in case.must_not_contain):
+        hits = [r for r in replies if "администратор" in r.lower()]
+        if hits:
             ev["metrics"]["scenario_expectations"] = "FAIL"
-            ev["defects"].append("метка [ЗАЯВКА] не распознана")
-        if not conv.ended:
-            ev["metrics"]["scenario_expectations"] = "FAIL"
-            ev["defects"].append("метка [КОНЕЦ] не поставлена")
+            ev["defects"].append(f"«администратор» звучит в репликах ×{len(hits)}")
+    if case.case_id == "TC-07" and booking is None:
+        ev["metrics"]["scenario_expectations"] = "FAIL"
+        ev["defects"].append("метка [ЗАЯВКА] не распознана")
+    if case.expect_end and not conv.ended:
+        ev["metrics"]["scenario_expectations"] = "FAIL"
+        ev["defects"].append("метка [КОНЕЦ] не поставлена")
 
     return {
         "case_id": case.case_id,
