@@ -46,9 +46,10 @@ class Settings(BaseSettings):
     stt_model: str = Field(default="scribe_v1", alias="ELEVENLABS_STT_MODEL")
     # PCM 16k — удобно для браузера (WebAudio) и минимальной задержки
     tts_output_format: str = Field(default="pcm_16000", alias="ELEVENLABS_OUTPUT_FORMAT")
-    # Тон: 0.9 звучит ровно, но «мёртво» и монотонно; 0.65 — ровный, но
-    # живой администратор. Выносим в .env для подбора на слух.
-    tts_stability: float = Field(default=0.65, alias="ELEVENLABS_TTS_STABILITY")
+    # Тон: 0.9 звучит ровно, но «мёртво» и монотонно; 0.5 — выразительный,
+    # с естественными паузами (выбран заказчиком). Выносим в .env для
+    # подбора на слух.
+    tts_stability: float = Field(default=0.5, alias="ELEVENLABS_TTS_STABILITY")
     tts_similarity_boost: float = Field(default=0.75, alias="ELEVENLABS_TTS_SIMILARITY")
     tts_speed: float = Field(default=1.0, alias="ELEVENLABS_TTS_SPEED")
 
@@ -108,9 +109,9 @@ class Settings(BaseSettings):
     voice_match_weak_threshold: float = Field(default=0.35, alias="VOICE_MATCH_WEAK_THRESHOLD")
     # Сколько секунд речи пациента копить, прежде чем пробовать узнать.
     # Реальный барьер качества — MIN_VOICED_SECONDS в embedder (6с ЧИСТОЙ
-    # речи); это — точка ПЕРВОЙ попытки по сырому аудио с паузами. 8с ≈
-    # 2–3 реплики: если чистой речи мало, попытка не сгорает, копим дальше.
-    voice_min_sample_seconds: float = Field(default=8.0, alias="VOICE_MIN_SAMPLE_SECONDS")
+    # речи); это — точка ПЕРВОЙ попытки по сырому аудио с паузами. 6с ≈
+    # 1–2 реплики: если чистой речи мало, попытка не сгорает, копим дальше.
+    voice_min_sample_seconds: float = Field(default=6.0, alias="VOICE_MIN_SAMPLE_SECONDS")
     voice_memory_path: str = Field(default="data/voice_memory.sqlite3", alias="VOICE_MEMORY_PATH")
     # Отладка: сохранять накопленный образец голоса в data/voice_debug/*.pcm,
     # чтобы анализировать, что реально слышит киоск (биометрия — только на
