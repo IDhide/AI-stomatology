@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 from collections.abc import AsyncIterator
 
 import httpx
@@ -33,12 +34,20 @@ class GrokLLM(LLMProvider):
         temperature: float = 0.4,
         max_tokens: int = 400,
         timeout: float = 10.0,
+        top_p: float = 0.9,
+        presence_penalty: float = 0.3,
+        frequency_penalty: float = 0.3,
     ):
         self.api_key = api_key
         self.base_url = base_url.rstrip("/")
         self.model = model
         self.temperature = temperature
         self.max_tokens = max_tokens
+        self.top_p = top_p
+        self.presence_penalty = presence_penalty
+        self.frequency_penalty = frequency_penalty
+        # параметры, которые модель отвергла 400-ым (см. _stream_once)
+        self._unsupported_params: set[str] = set()
         # Голосовой UX: ждать первый байт дольше ~10с бессмысленно — лучше
         # быстро повторить/сказать фразу-заглушку, чем 20с тишины у стойки.
         # Для QA-стенда таймаут поднимается через GROK_TIMEOUT.
@@ -85,8 +94,17 @@ class GrokLLM(LLMProvider):
             "messages": messages,
             "temperature": self.temperature,
             "max_tokens": self.max_tokens,
+            "top_p": self.top_p,
+            "presence_penalty": self.presence_penalty,
+            "frequency_penalty": self.frequency_penalty,
             "stream": True,
         }
+        # Часть моделей xAI не поддерживает penalties/top_p (26.08:
+        # grok-4.20-0309-non-reasoning отвечает 400 «does not support
+        # parameter presencePenalty») — такие параметры выкидываем из
+        # payload при первом же отказе и больше не шлём.
+        for key in self._unsupported_params:
+            payload.pop(key, None)
         if tools:
             payload["tools"] = tools
 
@@ -96,41 +114,67 @@ class GrokLLM(LLMProvider):
         }
 
         try:
-            async with self._client.stream(
-                "POST",
-                f"{self.base_url}/chat/completions",
-                json=payload,
-                headers=headers,
-            ) as resp:
-                if resp.status_code == 429 or resp.status_code >= 500:
-                    body = await resp.aread()
-                    logger.error(f"Grok {resp.status_code}: {body[:200]!r}")
-                    raise _TransientError(f"HTTP {resp.status_code}")
-                if resp.status_code != 200:
-                    body = await resp.aread()
-                    logger.error(f"Grok {resp.status_code}: {body[:300]!r}")
-                    resp.raise_for_status()
+            # до 3 попыток «очистки» payload от неподдерживаемых параметров
+            for _ in range(3):
+                async with self._client.stream(
+                    "POST",
+                    f"{self.base_url}/chat/completions",
+                    json=payload,
+                    headers=headers,
+                ) as resp:
+                    if resp.status_code == 429 or resp.status_code >= 500:
+                        body = await resp.aread()
+                        logger.error(f"Grok {resp.status_code}: {body[:200]!r}")
+                        raise _TransientError(f"HTTP {resp.status_code}")
+                    if resp.status_code == 400:
+                        body = await resp.aread()
+                        unsupported = self._parse_unsupported_param(body)
+                        if unsupported and unsupported in payload:
+                            payload.pop(unsupported)
+                            self._unsupported_params.add(unsupported)
+                            logger.warning(
+                                f"Grok: модель не поддерживает «{unsupported}» — "
+                                f"убрал из запроса и повторяю")
+                            continue
+                        logger.error(f"Grok {resp.status_code}: {body[:300]!r}")
+                        resp.raise_for_status()
+                    if resp.status_code != 200:
+                        body = await resp.aread()
+                        logger.error(f"Grok {resp.status_code}: {body[:300]!r}")
+                        resp.raise_for_status()
 
-                async for line in resp.aiter_lines():
-                    if not line or not line.startswith("data:"):
-                        continue
-                    data = line[len("data:"):].strip()
-                    if data == "[DONE]":
-                        break
-                    try:
-                        chunk = json.loads(data)
-                    except json.JSONDecodeError:
-                        continue
-                    choices = chunk.get("choices") or []
-                    if not choices:
-                        continue
-                    delta = choices[0].get("delta") or {}
-                    piece = delta.get("content")
-                    if piece:
-                        yield piece
+                    async for line in resp.aiter_lines():
+                        if not line or not line.startswith("data:"):
+                            continue
+                        data = line[len("data:"):].strip()
+                        if data == "[DONE]":
+                            break
+                        try:
+                            chunk = json.loads(data)
+                        except json.JSONDecodeError:
+                            continue
+                        choices = chunk.get("choices") or []
+                        if not choices:
+                            continue
+                        delta = choices[0].get("delta") or {}
+                        piece = delta.get("content")
+                        if piece:
+                            yield piece
+                return
         except (httpx.ConnectError, httpx.ConnectTimeout, httpx.ReadTimeout,
-                httpx.RemoteProtocolError) as e:
+                httpx.ReadError, httpx.RemoteProtocolError) as e:
             raise _TransientError(type(e).__name__) from e
+
+    @staticmethod
+    def _parse_unsupported_param(body: bytes) -> str | None:
+        """Достаёт имя неподдерживаемого параметра из ответа 400 xAI
+        («...does not support parameter presencePenalty.») и переводит
+        camelCase в snake_case-ключ нашего payload."""
+        m = re.search(rb"does not support parameter (\w+)", body)
+        if not m:
+            return None
+        camel = m.group(1).decode()
+        return re.sub(r"(?<!^)(?=[A-Z])", "_", camel).lower()
 
     async def aclose(self) -> None:
         await self._client.aclose()

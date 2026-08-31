@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import AsyncIterator, Awaitable, Callable
+from datetime import datetime, timedelta
 
 from loguru import logger
 
@@ -32,6 +33,24 @@ _FAREWELL_RE = re.compile(
     r"\b(до свидания|до встречи|всего доброго|всего хорошего|пока-пока|прощайте)\b",
     re.IGNORECASE,
 )
+
+_WEEKDAYS_RU = ("понедельник", "вторник", "среда", "четверг",
+                "пятница", "суббота", "воскресенье")
+_MONTHS_RU = ("января", "февраля", "марта", "апреля", "мая", "июня",
+              "июля", "августа", "сентября", "октября", "ноября", "декабря")
+
+
+def _now_line() -> str:
+    """Якорь реальной даты для модели. Без неё LLM выдумывает день недели
+    (27.08: сказала «сейчас среда» в четверг, приняла неверную поправку
+    пациента «в пятницу 29-е» и не нашла свободное окно — ушла в «перезвоню»).
+    """
+    def fmt(d: datetime) -> str:
+        return f"{_WEEKDAYS_RU[d.weekday()]}, {d.day} {_MONTHS_RU[d.month - 1]}"
+
+    now = datetime.now()
+    tomorrow = now + timedelta(days=1)
+    return f"СЕЙЧАС: {fmt(now)}, время {now:%H:%M}. Завтра: {fmt(tomorrow)}."
 
 # Повторное приветствие в первом ответе LLM: приветствие уже прозвучало
 # от шаблона при появлении пациента, а модель всё равно здоровается заново
@@ -99,7 +118,8 @@ class Conversation:
         """Первая инициатива системы — приветствие (из ТЗ)."""
         self.ended = False
         self._booking = None
-        text = self.persona.greeting(returning=self._greeted, name=name)
+        text = self.persona.greeting(returning=self._greeted, name=name,
+                                     hour=datetime.now().hour)
         self._greeted = True
         await self._speak(text, sink)
         self.history.append({"role": "assistant", "content": text})
@@ -185,9 +205,7 @@ class Conversation:
             # приставать к человеку, который уже отошёл от стойки.
             self._empty_streak += 1
             if self._empty_streak <= 3:
-                fallback = (self.persona.prompts.get("fallback")
-                            or "Простите, я вас не расслышала. Повторите, "
-                               "пожалуйста?").strip()
+                fallback = self.persona.fallback()
                 logger.info(f"STT: пусто ({self._empty_streak}-й раз подряд) — прошу повторить")
                 if on_reply_text:
                     await on_reply_text(fallback)
@@ -249,7 +267,7 @@ class Conversation:
         Стримит токены LLM и отдаёт их наружу законченными предложениями,
         чтобы TTS звучал естественно и начинался как можно раньше.
         """
-        system = self.persona.system
+        system = f"{_now_line()}\n\n{self.persona.system}"
         if self._extra_context:
             system = f"{system}\n\n{self._extra_context}"
         messages = [{"role": "system", "content": system}, *self.history]
@@ -342,11 +360,14 @@ class Conversation:
             return sentence
         if match.confidence != "high":
             return sentence
-        # диалог уже идёт (есть реплики ассистента кроме приветствия) — поздно
-        # для приветствия. LLM иногда всё равно здоровается по промпту,
-        # несмотря на запрет (флаки) — срезаем фразу детерминированно.
+        # Узнавание по голосу физически запаздывает: нужно накопить ~6с речи
+        # (2–3 реплики пациента), поэтому приветствие по имени разрешаем не
+        # только в первом ответе, а пока диалог молод (до 4-й реплики
+        # ассистента). Позже вставка нелепа — там имя подаёт промпт через
+        # контекст «РАСПОЗНАВАНИЕ ПО ГОЛОСУ», а флаки LLM (здоровается сама,
+        # несмотря на запрет) срезаем детерминированно.
         assistant_turns = sum(1 for m in self.history if m["role"] == "assistant")
-        if assistant_turns > 1:
+        if assistant_turns > 4:
             pattern = rf"^\s*приятно вас снова видеть,?\s*{re.escape(match.name)}\s*[.!]?\s*"
             stripped = re.sub(pattern, "", sentence, flags=re.IGNORECASE)
             if not stripped:

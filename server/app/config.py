@@ -36,6 +36,14 @@ class Settings(BaseSettings):
     grok_model: str = Field(default="grok-4.20-0309-non-reasoning", alias="GROK_MODEL")
     llm_temperature: float = Field(default=0.4, alias="LLM_TEMPERATURE")
     llm_max_tokens: int = Field(default=400, alias="LLM_MAX_TOKENS")
+    # Вариативность речи: temp ~0.7 + штрафы за повторы делают реплики живее
+    # (меньше «заезженных» фраз) без ухода в фантазию — факты жёстко заданы
+    # в промпте, а penalties бьют по повторам, а не по точности.
+    llm_top_p: float = Field(default=0.9, alias="LLM_TOP_P")
+    llm_presence_penalty: float = Field(default=0.3, alias="LLM_PRESENCE_PENALTY")
+    llm_frequency_penalty: float = Field(default=0.3, alias="LLM_FREQUENCY_PENALTY")
+    # Сколько пар реплик держим в sliding window истории диалога
+    max_history_pairs: int = Field(default=10, alias="MAX_HISTORY_PAIRS")
     # Таймаут чтения ответа Grok. На киоске держим коротким (лучше быстрый
     # ретрай/заглушка, чем тишина у стойки); для QA-стенда поднимаем через
     # GROK_TIMEOUT=60 — xAI иногда отдаёт первый токен за 10-20с.
@@ -56,6 +64,9 @@ class Settings(BaseSettings):
     tts_stability: float = Field(default=0.5, alias="ELEVENLABS_TTS_STABILITY")
     tts_similarity_boost: float = Field(default=0.75, alias="ELEVENLABS_TTS_SIMILARITY")
     tts_speed: float = Field(default=1.0, alias="ELEVENLABS_TTS_SPEED")
+    # Выразительность подачи (style exaggeration): 0.0 — ровный «шаблонный»
+    # голос диктора; 0.25–0.35 — живая, тёплая подача без театральности.
+    tts_style: float = Field(default=0.25, alias="ELEVENLABS_TTS_STYLE")
 
     # ── DIKIDI (только чтение записей) ──────────────────────────────
     dikidi_api_key: str = Field(default="", alias="DIKIDI_API_KEY")

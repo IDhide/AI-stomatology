@@ -26,6 +26,7 @@ class ElevenLabsTTS(TTSProvider):
         stability: float = 0.5,
         similarity_boost: float = 0.75,
         speed: float = 1.0,
+        style: float = 0.25,
     ):
         self.api_key = api_key
         self.voice_id = voice_id
@@ -34,6 +35,7 @@ class ElevenLabsTTS(TTSProvider):
         self.stability = stability
         self.similarity_boost = similarity_boost
         self.speed = speed
+        self.style = style
         self._client = httpx.AsyncClient(timeout=httpx.Timeout(30.0, connect=10.0))
 
     async def stream(self, text: str) -> AsyncIterator[bytes]:
@@ -60,7 +62,10 @@ class ElevenLabsTTS(TTSProvider):
                 # слух, 19.08).
                 "stability": self.stability,
                 "similarity_boost": self.similarity_boost,
-                "style": 0.0,          # без актёрских интонаций
+                # style>0 оживляет подачу: без него голос звучит «шаблонно»,
+                # как диктор (жалоба заказчика 27.08). 0.25–0.35 — тепло без
+                # театральности; значение из .env (ELEVENLABS_TTS_STYLE).
+                "style": self.style,
                 "use_speaker_boost": True,
                 "speed": self.speed,
             },

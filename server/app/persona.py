@@ -32,22 +32,49 @@ class Persona:
             logger.warning(f"prompts.yaml не найден ({path}) — использую дефолт")
             return {}
 
-    def greeting(self, *, returning: bool = False, name: str | None = None) -> str:
+    def _pick(self, list_key: str, key: str, default: str) -> str:
+        """Случайный вариант из списка; если списка нет — одиночный шаблон."""
+        variants = self.prompts.get(list_key) or []
+        if variants:
+            return random.choice(variants).strip()
+        return (self.prompts.get(key) or default).strip()
+
+    @staticmethod
+    def _apply_daypart(text: str, hour: int) -> str:
+        """«Добрый день» подгоняем под реальное время суток — иначе в два
+        часа ночи киоск говорит «добрый день» (27.08, заметил заказчик)."""
+        if "Добрый день" not in text:
+            return text
+        if 5 <= hour < 12:
+            return text.replace("Добрый день", "Доброе утро")
+        if 12 <= hour < 18:
+            return text
+        if 18 <= hour < 23:
+            return text.replace("Добрый день", "Добрый вечер")
+        return text.replace("Добрый день", "Здравствуйте")
+
+    def greeting(self, *, returning: bool = False, name: str | None = None,
+                 hour: int | None = None) -> str:
         if returning:
-            text = (self.prompts.get("greeting_returning")
-                    or "Рада снова вас слышать. Чем могу помочь?").strip()
+            text = self._pick("greetings_returning", "greeting_returning",
+                              "Рада снова вас слышать. Чем могу помочь?")
         else:
             # случайный вариант — приветствие не звучит однотипно
-            variants = self.prompts.get("greetings") or []
-            if variants:
-                text = random.choice(variants).strip()
-            else:
-                text = (self.prompts.get("greeting")
-                        or "Здравствуйте! Чем могу помочь?").strip()
+            text = self._pick("greetings", "greeting",
+                              "Здравствуйте! Чем могу помочь?")
+        if hour is not None:
+            text = self._apply_daypart(text, hour)
         if name:
             # «Добрый день, Анна! ...» — персональное обращение из ТЗ
             text = f"{name}, {text[0].lower()}{text[1:]}" if text else text
         return text
 
     def farewell(self) -> str:
-        return (self.prompts.get("farewell") or "До свидания, всего доброго!").strip()
+        # случайный вариант — прощание не штампуется одной фразой
+        return self._pick("farewells", "farewell", "До свидания, всего доброго!")
+
+    def fallback(self) -> str:
+        # «не расслышала» — тоже вариативно, иначе при плохой слышимости
+        # пациент слышит одну и ту же фразу по кругу
+        return self._pick("fallbacks", "fallback",
+                          "Простите, я вас не расслышала. Повторите, пожалуйста?")

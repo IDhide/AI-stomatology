@@ -1,0 +1,9 @@
+{"name": "Анна", "phone_raw": "89215551234", "preferred_time": "утром", "note": "Тестовая заявка 1", "created_at": "2026-08-06T20:59:54", "phone": "+7 921 555-12-34", "phone_valid": true}
+{"name": "Дмитрий", "phone_raw": "плохо расслышала номер", "preferred_time": "после 18", "note": "Тестовая заявка 2 — номер не распознан", "created_at": "2026-08-06T20:59:54", "phone": "плохо расслышала номер", "phone_valid": false}
+{"name": "Елена", "phone_raw": "89215559876", "preferred_time": "днём", "note": "Тестовая заявка 3", "created_at": "2026-08-06T20:59:54", "phone": "+7 921 555-98-76", "phone_valid": true}
+{"name": "Анна", "phone_raw": "89215551234", "preferred_time": "утром", "note": "Тестовая заявка 1", "created_at": "2026-08-06T21:19:14", "phone": "+7 921 555-12-34", "phone_valid": true}
+{"name": "Дмитрий", "phone_raw": "плохо расслышала номер", "preferred_time": "после 18", "note": "Тестовая заявка 2 — номер не распознан", "created_at": "2026-08-06T21:19:14", "phone": "плохо расслышала номер", "phone_valid": false}
+{"name": "Елена", "phone_raw": "89215559876", "preferred_time": "днём", "note": "Тестовая заявка 3", "created_at": "2026-08-06T21:19:14", "phone": "+7 921 555-98-76", "phone_valid": true}
+{"name": "Анна", "phone_raw": "89215551234", "preferred_time": "утром", "note": "Тестовая заявка 1", "created_at": "2026-08-06T21:36:02", "phone": "+7 921 555-12-34", "phone_valid": true}
+{"name": "Дмитрий", "phone_raw": "плохо расслышала номер", "preferred_time": "после 18", "note": "Тестовая заявка 2 — номер не распознан", "created_at": "2026-08-06T21:36:02", "phone": "плохо расслышала номер", "phone_valid": false}
+{"name": "Елена", "phone_raw": "89215559876", "preferred_time": "днём", "note": "Тестовая заявка 3", "created_at": "2026-08-06T21:36:02", "phone": "+7 921 555-98-76", "phone_valid": true}
