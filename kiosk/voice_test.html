@@ -1,0 +1,374 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Стенд узнавания по голосу — Оливия</title>
+<style>
+  :root {
+    --bg: #0b1220; --card: #131c2e; --line: #24314d; --text: #e8eefc;
+    --dim: #8ea0c2; --accent: #4f8cff; --ok: #36c79b; --warn: #f2a13c; --bad: #ff4466;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: var(--bg); color: var(--text);
+    font: 15px/1.5 -apple-system, "Segoe UI", Roboto, sans-serif;
+    min-height: 100vh; padding: 24px;
+  }
+  .wrap { max-width: 860px; margin: 0 auto; }
+  h1 { font-size: 22px; margin-bottom: 4px; }
+  .sub { color: var(--dim); margin-bottom: 20px; }
+  .card {
+    background: var(--card); border: 1px solid var(--line);
+    border-radius: 14px; padding: 20px; margin-bottom: 18px;
+  }
+  .card h2 { font-size: 16px; margin-bottom: 12px; }
+  .hint { color: var(--dim); font-size: 13px; margin-bottom: 12px; }
+  .phrases { margin: 12px 0; }
+  .phrases li {
+    list-style: none; padding: 10px 14px; margin-bottom: 8px;
+    background: #0e1626; border: 1px solid var(--line); border-radius: 10px;
+    font-size: 16px;
+  }
+  .phrases li::before { content: "🗣 "; }
+  input[type=text] {
+    width: 100%; padding: 10px 14px; border-radius: 10px; font-size: 16px;
+    background: #0e1626; border: 1px solid var(--line); color: var(--text);
+    margin-bottom: 12px;
+  }
+  button {
+    padding: 12px 22px; border: 0; border-radius: 10px; font-size: 16px;
+    cursor: pointer; background: var(--accent); color: #fff;
+  }
+  button:disabled { opacity: .35; cursor: default; }
+  button.ghost { background: #22304e; }
+  button.danger { background: transparent; color: var(--bad); border: 1px solid var(--bad); padding: 4px 10px; font-size: 13px; }
+  .row { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+  .meter {
+    height: 8px; flex: 1; min-width: 140px; background: #0e1626;
+    border-radius: 4px; overflow: hidden; border: 1px solid var(--line);
+  }
+  .meter > div { height: 100%; width: 0; background: var(--ok); transition: width .08s; }
+  .timer { font-variant-numeric: tabular-nums; color: var(--dim); }
+  .status { margin-top: 12px; font-size: 14px; color: var(--dim); white-space: pre-wrap; }
+  .status.err { color: var(--bad); }
+  .verdict {
+    margin-top: 14px; padding: 18px; border-radius: 12px; font-size: 18px;
+    display: none;
+  }
+  .verdict.ok   { display: block; background: #0d2b22; border: 1px solid var(--ok); }
+  .verdict.maybe{ display: block; background: #2e2110; border: 1px solid var(--warn); }
+  .verdict.bad  { display: block; background: #2c1018; border: 1px solid var(--bad); }
+  .verdict .big { font-size: 24px; font-weight: 700; margin-bottom: 6px; }
+  table { width: 100%; border-collapse: collapse; margin-top: 14px; font-size: 14px; }
+  th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--line); }
+  th { color: var(--dim); font-weight: 500; }
+  td.num { font-variant-numeric: tabular-nums; }
+  .tag { padding: 2px 8px; border-radius: 6px; font-size: 12px; }
+  .tag.ok { background: #0d2b22; color: var(--ok); }
+  .tag.maybe { background: #2e2110; color: var(--warn); }
+  .tag.bad { background: #2c1018; color: var(--bad); }
+  label.chk { color: var(--dim); font-size: 13px; display: flex; gap: 6px; align-items: center; }
+  .profiles { margin-top: 6px; }
+  .profiles .empty { color: var(--dim); font-size: 14px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>🎙 Стенд узнавания по голосу</h1>
+  <div class="sub">Шаг 1 — запишите эталон голоса. Шаг 2 — проверьте: свой голос должен узнаваться, чужой — нет. Работает на том же аудиотракте и той же базе, что и киоск.</div>
+
+  <!-- ШАГ 1: ЭТАЛОН -->
+  <div class="card">
+    <h2>1 · Запись эталона</h2>
+    <div class="hint">Нажмите «Запись» и спокойно прочитайте все пять фраз вслух, в своём обычном темпе. Нужно набрать хотя бы ~10–12 секунд.</div>
+    <ol class="phrases">
+      <li>Здравствуйте, я хочу записаться на приём к стоматологу.</li>
+      <li>У меня болит зуб в правом нижнем углу, ноет уже третий день.</li>
+      <li>Меня зовут (ваше имя), я записывался на чистку на пятницу.</li>
+      <li>Подскажите, сколько стоит поставить коронку или виниры?</li>
+      <li>Спасибо, я подумаю и перезвоню вам завтра утром.</li>
+    </ol>
+    <input type="text" id="name" placeholder="Имя (как Оливия должна вас называть)">
+    <div class="row">
+      <button id="rec-btn">● Начать запись</button>
+      <div class="meter"><div id="meter-fill"></div></div>
+      <span class="timer" id="rec-timer">0.0 с</span>
+    </div>
+    <div class="row" style="margin-top:12px">
+      <button id="save-btn" disabled>Сохранить голос в базу</button>
+      <label class="chk"><input type="checkbox" id="replace"> перезаписать мой старый профиль начисто</label>
+    </div>
+    <div class="status" id="enroll-status"></div>
+  </div>
+
+  <!-- ШАГ 2: ПРОВЕРКА -->
+  <div class="card">
+    <h2>2 · Проверка</h2>
+    <div class="hint">Нажмите кнопку и говорите что угодно ~8–10 секунд (например: «Здравствуйте, я хотел бы узнать про лечение зубов, что у вас есть и сколько это стоит»). Запись сама остановится после паузы. Потом пусть то же самое скажет другой человек — его система узнавать не должна.</div>
+    <div class="row">
+      <button id="verify-btn">🎤 Проверить голос</button>
+      <span class="timer" id="verify-timer"></span>
+    </div>
+    <div class="status" id="verify-status"></div>
+    <div class="verdict" id="verdict"></div>
+    <div id="dist-table"></div>
+  </div>
+
+  <!-- БАЗА -->
+  <div class="card">
+    <h2>3 · Профили в базе</h2>
+    <div class="profiles" id="profiles"><div class="empty">загрузка…</div></div>
+  </div>
+</div>
+
+<script>
+"use strict";
+// ── Тот же аудиотракт, что в kiosk/audio.js: WebAudio → даунсэмпл → PCM16 16k
+const TARGET_SR = 16000;
+
+function downsample(input, inRate, outRate = TARGET_SR) {
+  if (inRate === outRate) return input;
+  const ratio = inRate / outRate;
+  const outLen = Math.round(input.length / ratio);
+  const out = new Float32Array(outLen);
+  for (let i = 0; i < outLen; i++) {
+    const from = Math.floor(i * ratio);
+    const to = Math.min(input.length, Math.floor((i + 1) * ratio));
+    let sum = 0;
+    for (let j = from; j < to; j++) sum += input[j];
+    out[i] = to > from ? sum / (to - from) : input[from];
+  }
+  return out;
+}
+
+function floatToPcm16(f32) {
+  const pcm = new Int16Array(f32.length);
+  for (let i = 0; i < f32.length; i++) {
+    const s = Math.max(-1, Math.min(1, f32[i]));
+    pcm[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
+  }
+  return pcm;
+}
+
+// ── захват микрофона ─────────────────────────────────────────────
+let ctx = null, stream = null, proc = null;
+let chunks = [], recSeconds = 0, recording = false, verifyMode = false;
+let vad = { speaking: false, silenceMs: 0, heardMs: 0 };
+const THRESH = 0.012, SILENCE_STOP_MS = 1800, MAX_VERIFY_MS = 15000;
+
+async function initMic() {
+  if (ctx) return;
+  stream = await navigator.mediaDevices.getUserMedia({
+    audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+  });
+  ctx = new AudioContext();
+  const src = ctx.createMediaStreamSource(stream);
+  proc = ctx.createScriptProcessor(2048, 1, 1);
+  src.connect(proc);
+  const mute = ctx.createGain(); mute.gain.value = 0;   // НЕ выводим микрофон
+  proc.connect(mute);                                    // в динамики (в отличие от
+  mute.connect(ctx.destination);                         // текущего бага в kiosk)
+  proc.onaudioprocess = onFrame;
+}
+
+function onFrame(e) {
+  const input = e.inputBuffer.getChannelData(0);
+  let sum = 0;
+  for (let i = 0; i < input.length; i++) sum += input[i] * input[i];
+  const rms = Math.sqrt(sum / input.length);
+  document.getElementById("meter-fill").style.width = Math.min(100, rms * 800) + "%";
+  if (!recording) return;
+
+  const frameMs = (input.length / ctx.sampleRate) * 1000;
+  const pcm = floatToPcm16(downsample(input, ctx.sampleRate));
+  chunks.push(pcm);
+  recSeconds += frameMs / 1000;
+
+  if (verifyMode) {
+    if (rms > THRESH) { vad.speaking = true; vad.silenceMs = 0; vad.heardMs += frameMs; }
+    else if (vad.speaking) vad.silenceMs += frameMs;
+    const tooLong = recSeconds * 1000 >= MAX_VERIFY_MS;
+    const ended = vad.heardMs > 500 && vad.silenceMs > SILENCE_STOP_MS;
+    if (ended || tooLong) stopCapture(true);
+  }
+  const t = document.getElementById(verifyMode ? "verify-timer" : "rec-timer");
+  if (t) t.textContent = recSeconds.toFixed(1) + " с";
+}
+
+function startCapture(forVerify) {
+  chunks = []; recSeconds = 0; recording = true; verifyMode = forVerify;
+  vad = { speaking: false, silenceMs: 0, heardMs: 0 };
+}
+
+function stopCapture(finished) {
+  recording = false;
+  if (verifyMode && finished) sendVerify();
+}
+
+function mergedPcm() {
+  const total = chunks.reduce((n, c) => n + c.length, 0);
+  const out = new Int16Array(total);
+  let off = 0;
+  for (const c of chunks) { out.set(c, off); off += c.length; }
+  return out;
+}
+
+// ── Шаг 1: эталон ────────────────────────────────────────────────
+const recBtn = document.getElementById("rec-btn");
+const saveBtn = document.getElementById("save-btn");
+const enrollStatus = document.getElementById("enroll-status");
+
+recBtn.onclick = async () => {
+  enrollStatus.className = "status"; enrollStatus.textContent = "";
+  try { await initMic(); await ctx.resume(); }
+  catch (e) {
+    enrollStatus.className = "status err";
+    enrollStatus.textContent = "Нет доступа к микрофону. Откройте страницу по http://localhost (не по IP) и разрешите микрофон.";
+    return;
+  }
+  if (!recording) {
+    startCapture(false);
+    recBtn.textContent = "■ Стоп";
+    saveBtn.disabled = true;
+  } else {
+    recording = false;
+    recBtn.textContent = "● Начать запись";
+    saveBtn.disabled = recSeconds < 8;
+    enrollStatus.textContent = recSeconds < 8
+      ? `Записано ${recSeconds.toFixed(1)}с — мало, прочитайте все фразы (нужно ~10–12с).`
+      : `Записано ${recSeconds.toFixed(1)}с — можно сохранять.`;
+  }
+};
+
+saveBtn.onclick = async () => {
+  const name = document.getElementById("name").value.trim();
+  if (!name) { enrollStatus.className = "status err"; enrollStatus.textContent = "Введите имя."; return; }
+  const replace = document.getElementById("replace").checked ? "&replace=1" : "";
+  saveBtn.disabled = true;
+  enrollStatus.className = "status"; enrollStatus.textContent = "Сохраняю отпечаток…";
+  try {
+    const r = await fetch(`/api/voice-test/enroll?name=${encodeURIComponent(name)}${replace}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/octet-stream" },
+      body: mergedPcm().buffer,
+    });
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.detail || ("HTTP " + r.status));
+    enrollStatus.textContent =
+      `✅ Голос «${d.name}» сохранён (id=${d.patient_id}, ${d.raw_seconds}с)` +
+      (d.replaced ? ` — старый профиль id=${d.replaced.id} перезаписан.` : ".") +
+      (d.similar_to ? `\n⚠️ Голос похож на профиль «${d.similar_to.name}» (#${d.similar_to.id}, дистанция ${d.similar_to.distance}) — профили сохранены ОТДЕЛЬНО, так и надо.` : "");
+    loadProfiles();
+  } catch (e) {
+    enrollStatus.className = "status err";
+    enrollStatus.textContent = "❌ " + e.message;
+  }
+  saveBtn.disabled = false;
+};
+
+// ── Шаг 2: проверка ──────────────────────────────────────────────
+const verifyBtn = document.getElementById("verify-btn");
+const verifyStatus = document.getElementById("verify-status");
+
+verifyBtn.onclick = async () => {
+  document.getElementById("verdict").className = "verdict";
+  document.getElementById("dist-table").innerHTML = "";
+  verifyStatus.className = "status";
+  try { await initMic(); await ctx.resume(); }
+  catch (e) {
+    verifyStatus.className = "status err";
+    verifyStatus.textContent = "Нет доступа к микрофону. Откройте по http://localhost и разрешите микрофон.";
+    return;
+  }
+  if (!recording) {
+    startCapture(true);
+    verifyBtn.textContent = "■ Стоп (или помолчите)";
+    verifyStatus.textContent = "Слушаю… говорите 8–10 секунд.";
+  } else {
+    stopCapture(true);
+  }
+};
+
+async function sendVerify() {
+  verifyBtn.textContent = "🎤 Проверить голос";
+  verifyStatus.textContent = "Распознаю…";
+  try {
+    const r = await fetch("/api/voice-test/verify", {
+      method: "POST",
+      headers: { "Content-Type": "application/octet-stream" },
+      body: mergedPcm().buffer,
+    });
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.detail || ("HTTP " + r.status));
+    showVerdict(d);
+  } catch (e) {
+    verifyStatus.className = "status err";
+    verifyStatus.textContent = "❌ " + e.message;
+  }
+}
+
+function showVerdict(d) {
+  verifyStatus.textContent = "";
+  const v = document.getElementById("verdict");
+  if (d.verdict === "recognized") {
+    v.className = "verdict ok";
+    v.innerHTML = `<div class="big">✅ УЗНАЛА: ${esc(d.name)}</div>
+      сходство ${d.similarity_pct}% · дистанция ${d.distance} (порог узнавания ≤ ${d.thresholds.high})`;
+  } else if (d.verdict === "maybe") {
+    v.className = "verdict maybe";
+    v.innerHTML = `<div class="big">❓ ВОЗМОЖНО: ${esc(d.name)}</div>
+      сходство ${d.similarity_pct}% · дистанция ${d.distance} — между порогами ${d.thresholds.high}…${d.thresholds.weak}: Оливия мягко переспросит имя, но не будет утверждать.`;
+  } else {
+    v.className = "verdict bad";
+    v.innerHTML = `<div class="big">❌ НЕ УЗНАЛА — голос новый</div>
+      ближайший профиль на дистанции ${d.distance} (нужно ≤ ${d.thresholds.weak}). Так и должно быть для чужого человека.`;
+  }
+  if (d.distances && d.distances.length) {
+    let rows = d.distances.map(x => {
+      const cls = x.distance <= d.thresholds.high ? "ok" : x.distance <= d.thresholds.weak ? "maybe" : "bad";
+      const txt = cls === "ok" ? "узнала бы" : cls === "maybe" ? "переспрос" : "чужой";
+      return `<tr><td>${esc(x.name || "—")} <span style="color:var(--dim)">#${x.id}</span></td>
+        <td class="num">${x.distance.toFixed(3)}</td>
+        <td><span class="tag ${cls}">${txt}</span></td></tr>`;
+    }).join("");
+    document.getElementById("dist-table").innerHTML =
+      `<table><tr><th>Профиль</th><th>Дистанция</th><th>Решение</th></tr>${rows}</table>`;
+  }
+}
+
+// ── Шаг 3: профили ───────────────────────────────────────────────
+async function loadProfiles() {
+  const box = document.getElementById("profiles");
+  try {
+    const r = await fetch("/api/voice-test/profiles");
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.detail || ("HTTP " + r.status));
+    if (!d.profiles.length) { box.innerHTML = '<div class="empty">База пуста — запишите эталон выше.</div>'; return; }
+    box.innerHTML = "<table><tr><th>ID</th><th>Имя</th><th>Создан</th><th>Видели</th><th></th></tr>" +
+      d.profiles.map(p => `<tr>
+        <td class="num">${p.id}</td><td>${esc(p.name || "—")}</td>
+        <td class="num">${(p.created_at || "").replace("T", " ")}</td>
+        <td class="num">${(p.last_seen_at || "").replace("T", " ")}</td>
+        <td><button class="danger" onclick="delProfile(${p.id})">удалить</button></td>
+      </tr>`).join("") + "</table>";
+  } catch (e) {
+    box.innerHTML = `<div class="empty">❌ ${esc(e.message)}</div>`;
+  }
+}
+
+async function delProfile(id) {
+  if (!confirm(`Удалить профиль #${id} из базы голосов?`)) return;
+  const r = await fetch(`/api/voice-test/profiles/${id}`, { method: "DELETE" });
+  if (!r.ok) alert("Не удалось удалить: " + (await r.json()).detail);
+  loadProfiles();
+}
+
+function esc(s) {
+  return String(s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+}
+
+loadProfiles();
+</script>
+</body>
+</html>

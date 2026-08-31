@@ -47,6 +47,11 @@ export class MicCapture {
                                      // обрывало фразу на середине мысли)
     this.MIN_SPEECH_MS = 400;        // короче — шорох, не отправляем в STT
     this.THRESH = 0.012;             // порог энергии (RMS)
+    // Пред-буфер ~300мс: начало слова (тихая атака согласного) звучит ДО
+    // превышения порога — без буфера первый слог фразы съедался, и Scribe
+    // получал фразу с обрубком («…равствуйте»). Кадр 2048@48k ≈ 43мс → 7 кадров.
+    this.preBuffer = [];
+    this.PREBUFFER_FRAMES = 7;
   }
 
   async init() {
@@ -61,7 +66,14 @@ export class MicCapture {
     const src = this.ctx.createMediaStreamSource(stream);
     const proc = this.ctx.createScriptProcessor(2048, 1, 1);
     src.connect(proc);
-    proc.connect(this.ctx.destination);
+    // ВАЖНО: микрофон НЕ выводим в динамики. Раньше proc.connect(destination)
+    // гнал голос пациента в колонку с задержкой — эхо-петля, риск заводки, а
+    // AEC/noiseSuppression, борясь с этим, уродовали саму речь (27.08).
+    // ScriptProcessor работает и через неслышный gain=0.
+    const mute = this.ctx.createGain();
+    mute.gain.value = 0;
+    proc.connect(mute);
+    mute.connect(this.ctx.destination);
     proc.onaudioprocess = (e) => this._process(e.inputBuffer.getChannelData(0));
     this.sr = this.ctx.sampleRate;
   }
@@ -73,6 +85,7 @@ export class MicCapture {
       this.speaking = false;
       this.silenceMs = 0;
       this.speechMs = 0;
+      this.preBuffer = [];
       this.onUtteranceCancel?.();
     }
   }
@@ -83,18 +96,27 @@ export class MicCapture {
     for (let i = 0; i < frame.length; i++) sum += frame[i] * frame[i];
     const rms = Math.sqrt(sum / frame.length);
     const frameMs = (frame.length / this.sr) * 1000;
+    const pcm = floatToPcm16(downsample(frame, this.sr));
 
     if (rms > this.THRESH) {
-      if (!this.speaking) { this.speaking = true; this.speechMs = 0; this.onUtteranceStart?.(); }
+      if (!this.speaking) {
+        this.speaking = true; this.speechMs = 0;
+        this.onUtteranceStart?.();
+        // сначала пред-буфер (начало фразы), потом текущий кадр — порядок
+        // в WS гарантирован, сервер получит фразу целиком от первого звука
+        for (const c of this.preBuffer) this.onChunk?.(c);
+      }
       this.silenceMs = 0;
       this.speechMs += frameMs;
-      const pcm = floatToPcm16(downsample(frame, this.sr));
       this.onChunk?.(pcm);
     } else if (this.speaking) {
       this.silenceMs += frameMs;
-      const pcm = floatToPcm16(downsample(frame, this.sr));
       this.onChunk?.(pcm); // добираем хвост тишины
       if (this.silenceMs > this.SILENCE_LIMIT) this._endUtterance();
+    } else {
+      // тишина вне речи — просто копим пред-буфер
+      this.preBuffer.push(pcm);
+      if (this.preBuffer.length > this.PREBUFFER_FRAMES) this.preBuffer.shift();
     }
   }
 
@@ -103,6 +125,7 @@ export class MicCapture {
     this.speaking = false;
     this.silenceMs = 0;
     this.speechMs = 0;
+    this.preBuffer = [];  // чтобы хвост этой фразы не попал в начало следующей
     if (tooShort) this.onUtteranceCancel?.();
     else this.onUtteranceEnd?.();
   }

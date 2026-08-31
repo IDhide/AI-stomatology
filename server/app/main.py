@@ -25,7 +25,7 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from loguru import logger
@@ -138,13 +138,134 @@ async def voices():
             "voices": result}
 
 
+# ────────────────────────────────────────────────────────────
+#  Тестовый стенд узнавания по голосу (/voice-test)
+#  Отдельная страница для калибровки: записать эталонные фразы →
+#  проверить, что система узнаёт того же человека и НЕ узнаёт чужого.
+#  Работает на том же аудиотракте (PCM16 mono 16k) и той же базе,
+#  что и боевой киоск — замеры честные.
+# ────────────────────────────────────────────────────────────
+def _voice_stand_or_503() -> None:
+    if not (_settings.voice_id_enabled and voice_embedder
+            and voice_embedder.enabled and voice_memory):
+        raise HTTPException(
+            503,
+            "узнавание по голосу выключено: проверьте VOICE_ID_ENABLED=true "
+            "и что resemblyzer установлен",
+        )
+
+
+@app.get("/voice-test")
+async def voice_test_page():
+    return FileResponse(KIOSK_DIR / "voice_test.html")
+
+
+@app.get("/api/voice-test/profiles")
+async def voice_test_profiles():
+    _voice_stand_or_503()
+    profiles = await asyncio.to_thread(voice_memory.list_profiles)
+    return {"profiles": profiles}
+
+
+@app.delete("/api/voice-test/profiles/{patient_id}")
+async def voice_test_delete(patient_id: int):
+    _voice_stand_or_503()
+    ok = await asyncio.to_thread(voice_memory.delete, patient_id)
+    if not ok:
+        raise HTTPException(404, f"профиль id={patient_id} не найден")
+    return {"deleted": patient_id}
+
+
+@app.post("/api/voice-test/enroll")
+async def voice_test_enroll(request: Request):
+    """Записать эталон голоса. Тело — PCM16 mono 16k, ?name=Илья,
+    ?replace=1 — сначала удалить свой старый профиль (чистая перезапись)."""
+    _voice_stand_or_503()
+    name = (request.query_params.get("name") or "").strip()
+    if not name:
+        raise HTTPException(400, "нужно имя: ?name=…")
+    audio = await request.body()
+    raw_seconds = len(audio) / 2 / 16000
+    embedding = await asyncio.to_thread(voice_embedder.embed, audio)
+    if embedding is None:
+        raise HTTPException(
+            422,
+            f"чистой речи меньше 6с (записано {raw_seconds:.1f}с с паузами) — "
+            "прочитайте все фразы громче и без долгих пауз",
+        )
+    replaced = None
+    if request.query_params.get("replace") == "1":
+        # чистая перезапись: свой прежний отпечаток лежит близко — удаляем,
+        # иначе enroll() сольётся в него и старые ошибки останутся в профиле
+        dists = await asyncio.to_thread(voice_memory.distances_to_all, embedding)
+        if dists and dists[0]["distance"] <= VoiceMemoryStore.DEDUP_DISTANCE:
+            replaced = dists[0]
+            await asyncio.to_thread(voice_memory.delete, dists[0]["id"])
+    # Стенд — без авто-склейки (dedup=False): каждый записанный человек
+    # получает СВОЙ профиль. Иначе голос, похожий на чей-то профиль ближе
+    # 0.45, молча вливался в чужой отпечаток (27.08: Алина слилась в профиль
+    # Ильи, после чего её «узнавало» как Илью с 87%).
+    pid = await asyncio.to_thread(
+        voice_memory.enroll, embedding, name, None, False
+    )
+    if pid is None:
+        raise HTTPException(500, "не удалось сохранить отпечаток")
+    logger.info(f"🎙️ Стенд: записан эталон голоса «{name}» (id={pid}, {raw_seconds:.1f}с)")
+    # предупреждение для UI: вдруг это тот же человек под другим именем
+    dists = await asyncio.to_thread(voice_memory.distances_to_all, embedding)
+    similar = next((d for d in dists if d["id"] != pid), None)
+    return {"patient_id": pid, "name": name,
+            "raw_seconds": round(raw_seconds, 1), "replaced": replaced,
+            "similar_to": similar
+            if similar and similar["distance"] <= 0.45 else None}
+
+
+@app.post("/api/voice-test/verify")
+async def voice_test_verify(request: Request):
+    """Проверка: узнаёт ли система этот голос. Тело — PCM16 mono 16k."""
+    _voice_stand_or_503()
+    audio = await request.body()
+    raw_seconds = len(audio) / 2 / 16000
+    embedding = await asyncio.to_thread(voice_embedder.embed, audio)
+    if embedding is None:
+        raise HTTPException(
+            422,
+            f"чистой речи меньше 6с (записано {raw_seconds:.1f}с с паузами) — "
+            "говорите дольше, одной-двумя фразами может не хватить",
+        )
+    match = await asyncio.to_thread(
+        voice_memory.match, embedding, _settings.voice_match_threshold,
+        weak_threshold=_settings.voice_match_weak_threshold,
+    )
+    verdict = ("recognized" if match.confidence == "high"
+               else "maybe" if match.confidence == "low" else "stranger")
+    logger.info(
+        f"🎙️ Стенд: проверка голоса → {verdict}, distance={match.distance:.3f}, "
+        f"name={match.name!r}"
+    )
+    return {
+        "verdict": verdict,
+        "name": match.name,
+        "patient_id": match.patient_id,
+        "distance": round(match.distance, 4),
+        "similarity_pct": int(round(match.similarity * 100)),
+        "raw_seconds": round(raw_seconds, 1),
+        "thresholds": {
+            "high": _settings.voice_match_threshold,
+            "weak": _settings.voice_match_weak_threshold,
+        },
+        "distances": await asyncio.to_thread(voice_memory.distances_to_all, embedding),
+    }
+
+
 @app.websocket("/ws")
 async def ws_endpoint(ws: WebSocket):
     await ws.accept()
     cfg = get_settings()
     stt, llm, tts = build_providers(cfg)
     persona = Persona(cfg.prompts_path)
-    conv = Conversation(stt, llm, tts, persona)
+    conv = Conversation(stt, llm, tts, persona,
+                        max_history_pairs=cfg.max_history_pairs)
     dikidi = DikidiReadOnly(
         api_key=cfg.dikidi_api_key,
         company_id=cfg.dikidi_company_id,
@@ -220,8 +341,20 @@ async def ws_endpoint(ws: WebSocket):
                 try:
                     if data.get("present"):
                         convlog.start()
-                        # новый визит — сбрасываем состояние узнавания по голосу
-                        # предыдущего пациента (WS-соединение живёт весь день)
+                        # НОВЫЙ посетитель = НОВЫЙ разговор: WS-соединение
+                        # живёт весь день, и если переиспользовать Conversation,
+                        # новый человек получает «Рада снова вас слышать» и
+                        # историю чужого диалога (26.08 — реальный кейс).
+                        # Перед заменой забираем несохранённую заявку, если
+                        # предыдущая сессия завершилась без presence:false.
+                        stale_booking = conv.take_booking()
+                        if stale_booking:
+                            booking_store.add(stale_booking)
+                            finalize_voice(stale_booking)
+                        conv = Conversation(stt, llm, tts, persona,
+                                            max_history_pairs=cfg.max_history_pairs)
+                        # сбрасываем состояние узнавания по голосу
+                        # предыдущего пациента
                         voice_sample_buf.clear()
                         voice_match_attempted = False
                         voice_matched_id = None
@@ -318,11 +451,20 @@ async def ws_endpoint(ws: WebSocket):
                                 conv.set_context(
                                     "\n\n".join(p for p in (dikidi_context, voice_line) if p)
                                 )
-                                # Уверенное совпадение — подмешиваем свежий отпечаток
-                                # в сохранённый: голос/микрофон «плывут» со временем,
-                                # так база сама адаптируется к киоску
+                                # Совпадение любой уверенности — подмешиваем свежий
+                                # отпечаток в сохранённый: голос/микрофон «плывут» со
+                                # временем, так база сама адаптируется к киоску.
+                                # Раньше это было только при high — и база никогда не
+                                # адаптировалась, потому что high почти недостижим
+                                # (замер 26.08: свой голос 0.24–0.42 при пороге 0.17).
+                                # При слабом совпадении подмешиваем малым весом (0.15),
+                                # чтобы редкая ошибка не «увела» чужой профиль.
                                 if match.confidence == "high":
                                     voice_memory.update_embedding(match.patient_id, voice_embedding)
+                                else:
+                                    voice_memory.update_embedding(
+                                        match.patient_id, voice_embedding, new_weight=0.15
+                                    )
 
                 async def on_transcript(t: str):
                     convlog.log("user", t)

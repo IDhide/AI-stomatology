@@ -65,6 +65,16 @@ def _word_count(text: str) -> int:
     return len(WORD_RE.findall(text))
 
 
+def _resolve_prompts_path(p: str) -> str:
+    """prompts_path относителен CWD: киоск запускается из корня репозитория
+    (run.sh), QA — из server/. Ищем файл в обоих местах."""
+    path = Path(p)
+    if path.exists():
+        return p
+    alt = Path(__file__).resolve().parents[2] / p
+    return str(alt) if alt.exists() else p
+
+
 def _has_med(text: str) -> str | None:
     low = text.lower()
     drug = next((w for w in MED_DRUGS if w in low), None)
@@ -255,7 +265,31 @@ CASES: list[Case] = [
         must_not_contain=["ох,", "ой,", "ах,", "администратор"],
         ideal="Сочувствую. Приложите холод к щеке и не грейте. Могу записать вас на сегодня.",
     ),
+    Case(
+        "TC-15", "Сарказм про цены — лёгкий ответ в тон, без нотаций",
+        lines=["Сколько стоит чистка?", "Ага, пять тысяч — вы там золотом полируете?"],
+        target_turn=1,
+        # легко и с юмором, но возвращает к делу; цену не отменяет
+        must_contain=["чистк|блест|улыб|консультац|запис|профессиональн|полную"],
+        must_not_contain=["администратор", "приношу извинения", "извините за"],
+        ideal="Золотом не полируем, но после профессиональной чистки зубы правда блестят. Кстати, консультация у нас бесплатная.",
+    ),
+    Case(
+        "TC-16", "Возражение «дорого, подумаю» — не дожимать",
+        lines=["Сколько стоят виниры?", "Дороговато. Ладно, я подумаю."],
+        target_turn=1,
+        # один спокойный аргумент + свобода, без давления и без прощания
+        must_contain=["подум|хорошо|конечно|понимаю|бесплатн|акци"],
+        must_not_contain=["администратор", "до свидания", "всего доброго"],
+        ideal="Понимаю. Кстати, сейчас на виниры акция, и консультация бесплатная — так что подумайте спокойно, я здесь.",
+    ),
 ]
+
+
+def _contains_phrase(low: str, phrase: str) -> bool:
+    """Запрещённая фраза ищется с границей слова слева: «ой,» не должно
+    срабатывать на «водой,» (26.08 — ложный FAIL в TC-03/TC-14)."""
+    return re.search(rf"(?<![а-яёa-z]){re.escape(phrase.lower())}", low) is not None
 
 
 # ── оценка ────────────────────────────────────────────────────────────
@@ -284,7 +318,9 @@ def evaluate_reply(case: Case, reply: str, *, dialog_position: str) -> dict:
     contains_ok = all(
         any(alt in low for alt in c.lower().split("|")) for c in case.must_contain
     )
-    not_contains_ok = all(c.lower() not in low for c in case.must_not_contain)
+    not_contains_ok = all(
+        not _contains_phrase(low, c) for c in case.must_not_contain
+    )
 
     defects = []
     if brevity == "FAIL":
@@ -296,7 +332,7 @@ def evaluate_reply(case: Case, reply: str, *, dialog_position: str) -> dict:
     if not contains_ok:
         defects.append(f"нет обязательного: {case.must_contain}")
     if not not_contains_ok:
-        defects.append(f"есть запрещённое: {[c for c in case.must_not_contain if c.lower() in low]}")
+        defects.append(f"есть запрещённое: {[c for c in case.must_not_contain if _contains_phrase(low, c)]}")
 
     return {
         "word_count": wc,
@@ -311,8 +347,13 @@ def evaluate_reply(case: Case, reply: str, *, dialog_position: str) -> dict:
 async def run_case(case: Case, cfg) -> dict:
     llm = GrokLLM(api_key=cfg.xai_api_key, base_url=cfg.grok_base_url,
                   model=cfg.grok_model, temperature=cfg.llm_temperature,
-                  max_tokens=cfg.llm_max_tokens, timeout=cfg.llm_timeout)
-    conv = Conversation(ScriptSTT(), llm, NullTTS(), Persona(cfg.prompts_path))
+                  max_tokens=cfg.llm_max_tokens, timeout=cfg.llm_timeout,
+                  top_p=cfg.llm_top_p,
+                  presence_penalty=cfg.llm_presence_penalty,
+                  frequency_penalty=cfg.llm_frequency_penalty)
+    conv = Conversation(ScriptSTT(), llm, NullTTS(),
+                        Persona(_resolve_prompts_path(cfg.prompts_path)),
+                        max_history_pairs=cfg.max_history_pairs)
 
     # контекст расписания — как main.py при появлении пациента
     if case.dikidi_dead:
@@ -438,6 +479,16 @@ async def main() -> None:
             print(f"→ дефекты: {r['defect_analysis']}")
 
     out = Path(__file__).resolve().parents[2] / "docs" / "qa_report.json"
+    # частичный перезапуск (qa_eval.py TC-09) не должен затирать полный
+    # отчёт — подмерживаем результаты по case_id
+    merged = {r["case_id"]: r for r in results}
+    if out.exists():
+        try:
+            for old in json.loads(out.read_text(encoding="utf-8")):
+                merged.setdefault(old["case_id"], old)
+        except (json.JSONDecodeError, KeyError):
+            pass
+    results = list(merged.values())
     out.write_text(json.dumps(results, ensure_ascii=False, indent=2))
     passed = sum(1 for r in results if all(v == "PASS" for v in r["metrics_evaluation"].values()))
     print(f"\n{'═' * 70}\nИТОГ: {passed}/{len(results)} кейсов PASS → {out}")

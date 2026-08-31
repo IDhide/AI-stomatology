@@ -45,7 +45,8 @@ async def test_format_for_prompt_lists_free_slots():
 
     assert "СВОБОДНЫЕ ОКНА ДЛЯ ЗАПИСИ" in text
     assert "завтра" in text or "сегодня" in text
-    assert "НИКОГДА не подтверждай запись" in text
+    # Оливия — автономный администратор: при наличии окон подтверждает сама
+    assert "подтверждай запись сама" in text
 
 
 @pytest.mark.asyncio

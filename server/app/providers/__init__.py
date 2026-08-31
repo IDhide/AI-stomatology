@@ -36,6 +36,9 @@ def build_llm(cfg: Settings) -> LLMProvider:
             temperature=cfg.llm_temperature,
             max_tokens=cfg.llm_max_tokens,
             timeout=cfg.llm_timeout,
+            top_p=cfg.llm_top_p,
+            presence_penalty=cfg.llm_presence_penalty,
+            frequency_penalty=cfg.llm_frequency_penalty,
         )
     logger.warning("LLM: mock (нет ключа XAI)")
     return MockLLM()
@@ -47,7 +50,7 @@ def build_tts(cfg: Settings) -> TTSProvider:
 
         logger.info(
             f"TTS: ElevenLabs {cfg.tts_model} "
-            f"(stability={cfg.tts_stability}, speed={cfg.tts_speed})"
+            f"(stability={cfg.tts_stability}, style={cfg.tts_style}, speed={cfg.tts_speed})"
         )
         return ElevenLabsTTS(
             api_key=cfg.elevenlabs_api_key,
@@ -57,6 +60,7 @@ def build_tts(cfg: Settings) -> TTSProvider:
             stability=cfg.tts_stability,
             similarity_boost=cfg.tts_similarity_boost,
             speed=cfg.tts_speed,
+            style=cfg.tts_style,
         )
     logger.warning("TTS: mock (нет ключа ElevenLabs или voice_id)")
     return MockTTS()

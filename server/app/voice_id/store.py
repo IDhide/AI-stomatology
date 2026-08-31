@@ -121,13 +121,21 @@ class VoiceMemoryStore:
     # ── запись ───────────────────────────────────────────────────────
     # Если новый отпечаток ближе этого к уже сохранённому — это почти
     # наверняка тот же человек, которого просто не узнали в этот визит
-    # (хрипотца, шум, мало речи). Чужие голоса лежат дальше (~0.48+).
-    # Вместо дубля в базе — подмешиваем отпечаток в существующий профиль.
-    DEDUP_DISTANCE = 0.45
+    # (хрипотца, шум, мало речи). Вместо дубля в базе — подмешиваем
+    # отпечаток в существующий профиль.
+    # ВАЖНО: порог держим НЕ шире порога узнавания (0.30). Замер 27.08:
+    # голос Алины лёг на 0.4+ от профиля Ильи и склейка с порогом 0.45
+    # молча влила чужой голос в его профиль — после чего Алину
+    # «узнавало» как Илью с 87%. Дубль профиля безвреден (узнает по
+    # любому из двух), а вот влитие чужого голоса ломает узнавание.
+    DEDUP_DISTANCE = 0.30
 
-    def enroll(self, embedding: list[float], name: str, phone: str | None = None) -> int | None:
+    def enroll(self, embedding: list[float], name: str, phone: str | None = None,
+               dedup: bool = True) -> int | None:
+        # dedup=False — тестовый стенд: каждый человек получает СВОЙ профиль,
+        # без молчаливой склейки в чужой (иначе калибровка бессмысленна).
         rows = self._all_rows()
-        if rows:
+        if rows and dedup:
             query = np.asarray(embedding, dtype=np.float32)
             best_id, best_dist = None, 2.0
             for row_id, _name, _phone, emb in rows:
@@ -207,6 +215,43 @@ class VoiceMemoryStore:
                 )
         except Exception as e:
             logger.error(f"VoiceMemoryStore.update_embedding: {e}")
+
+    # ── служебное: тестовый стенд /voice-test ─────────────────────
+    def list_profiles(self) -> list[dict]:
+        """Список профилей без эмбеддингов (для тестового стенда)."""
+        try:
+            with self._connect() as conn:
+                cur = conn.execute(
+                    "select id, name, phone, created_at, last_seen_at from voice_patients order by id"
+                )
+                return [
+                    {"id": r[0], "name": r[1], "phone": r[2],
+                     "created_at": r[3], "last_seen_at": r[4]}
+                    for r in cur.fetchall()
+                ]
+        except Exception as e:
+            logger.error(f"VoiceMemoryStore.list_profiles: {e}")
+            return []
+
+    def distances_to_all(self, embedding: list[float]) -> list[dict]:
+        """Дистанция запроса до КАЖДОГО профиля (диагностика на стенде)."""
+        query = np.asarray(embedding, dtype=np.float32)
+        out = [
+            {"id": row_id, "name": name, "distance": round(1.0 - float(np.dot(query, emb)), 4)}
+            for row_id, name, _phone, emb in self._all_rows()
+        ]
+        out.sort(key=lambda r: r["distance"])
+        return out
+
+    def delete(self, patient_id: int) -> bool:
+        """Удалить профиль (тестовый стенд: убрать пробную запись)."""
+        try:
+            with self._connect() as conn:
+                cur = conn.execute("delete from voice_patients where id = ?", (patient_id,))
+                return cur.rowcount > 0
+        except Exception as e:
+            logger.error(f"VoiceMemoryStore.delete: {e}")
+            return False
 
     # ── промпт ───────────────────────────────────────────────────────
     @staticmethod

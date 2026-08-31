@@ -12,7 +12,8 @@ class _FakePersona:
     prompts: dict = {}
     system: str = "ты тестовая персона"
 
-    def greeting(self, *, returning: bool = False, name: str | None = None) -> str:
+    def greeting(self, *, returning: bool = False, name: str | None = None,
+                 hour: int | None = None) -> str:
         return "Здравствуйте!"
 
     def farewell(self) -> str:
@@ -155,10 +156,50 @@ async def test_voice_match_new_patient_no_greeting():
 
 @pytest.mark.asyncio
 async def test_voice_greeting_not_prepended_mid_dialog():
-    """Матч пришёл посреди разговора — механическое приветствие не вклеиваем,
-    имя подаёт промпт через контекст (13.08: «снова видеть» на 10-й реплике)."""
+    """Матч пришёл глубоко посреди разговора (после 4-й реплики ассистента) —
+    механическое приветствие не вклеиваем, имя подаёт промпт через контекст
+    (13.08: «снова видеть» на 10-й реплике). На 2–4 реплике — вклеиваем:
+    узнавание физически запаздывает (нужно накопить ~6с речи)."""
     conv = _conv(llm=_FakeLLM("Запишем вас на завтра."))
-    # диалог уже идёт: приветствие + два ответа ассистента в истории
+    # диалог давно идёт: приветствие + 4 ответа ассистента в истории
+    conv.history.append({"role": "assistant", "content": "Здравствуйте!"})
+    conv.history.append({"role": "user", "content": "Хочу на чистку"})
+    conv.history.append({"role": "assistant", "content": "Хорошо, когда удобно?"})
+    conv.history.append({"role": "user", "content": "Завтра вечером"})
+    conv.history.append({"role": "assistant", "content": "Есть окно в семь."})
+    conv.history.append({"role": "user", "content": "А на послезавтра?"})
+    conv.history.append({"role": "assistant", "content": "Тоже есть, в шесть."})
+    conv.history.append({"role": "user", "content": "Давайте в шесть"})
+    conv.history.append({"role": "assistant", "content": "Записала, ждём вас."})
+    conv.history.append({"role": "user", "content": "Спасибо!"})
+    conv.set_voice_match(VoiceMatch(
+        patient_id=1,
+        name="Илья",
+        phone=None,
+        distance=0.10,
+        is_new=False,
+        confidence="high",
+    ))
+
+    spoken: list[str] = []
+    async def sink(chunk: bytes) -> None:
+        pass
+    async def _transcript(t: str) -> None:
+        pass
+    async def _reply(t: str) -> None:
+        spoken.append(t)
+
+    await conv.handle_utterance(b"\x00\x00", sink, on_transcript=_transcript, on_reply_text=_reply)
+
+    assert spoken[0] == "Запишем вас на завтра."
+
+
+@pytest.mark.asyncio
+async def test_voice_greeting_prepended_early_dialog():
+    """Матч пришёл на 2–3 реплике — это норма: узнавание ждёт ~6с накопленной
+    речи, к первому ответу физически не успевает. Пока диалог молодой
+    (до 4-й реплики ассистента), приветствие по имени вклеиваем."""
+    conv = _conv(llm=_FakeLLM("Запишем вас на завтра."))
     conv.history.append({"role": "assistant", "content": "Здравствуйте!"})
     conv.history.append({"role": "user", "content": "Хочу на чистку"})
     conv.history.append({"role": "assistant", "content": "Хорошо, когда удобно?"})
@@ -182,7 +223,7 @@ async def test_voice_greeting_not_prepended_mid_dialog():
 
     await conv.handle_utterance(b"\x00\x00", sink, on_transcript=_transcript, on_reply_text=_reply)
 
-    assert spoken[0] == "Запишем вас на завтра."
+    assert spoken[0] == "Приятно вас снова видеть, Илья! запишем вас на завтра."
 
 
 @pytest.mark.asyncio
@@ -304,12 +345,20 @@ async def test_strip_then_voice_greeting_prepended():
 
 @pytest.mark.asyncio
 async def test_llm_greeting_stripped_mid_dialog():
-    """LLM нарушила промпт и сама поздоровалась посреди диалога —
-    фраза срезается детерминированно, имя остаётся только из контекста."""
+    """LLM нарушила промпт и сама поздоровалась глубоко посреди диалога
+    (после 4-й реплики ассистента) — фраза срезается детерминированно,
+    имя остаётся только из контекста."""
     conv = _conv(llm=_FakeLLM("Приятно вас снова видеть, Илья. На завтра есть окна в семь."))
     conv.history.append({"role": "assistant", "content": "Здравствуйте!"})
     conv.history.append({"role": "user", "content": "Хочу на чистку"})
     conv.history.append({"role": "assistant", "content": "Когда удобно?"})
+    conv.history.append({"role": "user", "content": "Завтра днём"})
+    conv.history.append({"role": "assistant", "content": "Есть в три."})
+    conv.history.append({"role": "user", "content": "А в два можно?"})
+    conv.history.append({"role": "assistant", "content": "Можно и в два."})
+    conv.history.append({"role": "user", "content": "Отлично"})
+    conv.history.append({"role": "assistant", "content": "Записала вас."})
+    conv.history.append({"role": "user", "content": "Спасибо"})
     conv.set_voice_match(VoiceMatch(
         patient_id=1, name="Илья", phone=None,
         distance=0.10, is_new=False, confidence="high",

@@ -11,7 +11,8 @@ class _FakePersona:
     prompts: dict = {}
     system: str = "ты тестовая персона"
 
-    def greeting(self, *, returning: bool = False, name: str | None = None) -> str:
+    def greeting(self, *, returning: bool = False, name: str | None = None,
+                 hour: int | None = None) -> str:
         return "Здравствуйте!"
 
     def farewell(self) -> str:
